@@ -1,4 +1,5 @@
 """Headless Qt checks of the real room UI calling service interfaces."""
+
 import asyncio
 import os
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
+
 pytest.importorskip("PySide6")
 pytest.importorskip("qasync")
 from PySide6.QtCore import Qt
@@ -20,15 +22,31 @@ from croom_ui.main import RoomWindow
 def window():
     app = QApplication.instance() or QApplication([])
     now = datetime.now(timezone.utc)
-    event = CalendarEvent("event", "A real calendar booking", now, now + timedelta(hours=1),
-                          meeting_url="https://teams.microsoft.com/l/meetup-join/test")
-    calendar = SimpleNamespace(is_running=True, last_sync=now, sync_error=None, events=[event], refresh=AsyncMock())
-    meeting = SimpleNamespace(is_running=True, state=SimpleNamespace(value="idle"), current_meeting=None,
-                              get_available_platforms=lambda: ["teams"], leave_meeting=AsyncMock(),
-                              toggle_mute=AsyncMock(), toggle_camera=AsyncMock())
+    event = CalendarEvent(
+        "event",
+        "A real calendar booking",
+        now,
+        now + timedelta(hours=1),
+        meeting_url="https://teams.microsoft.com/l/meetup-join/test",
+    )
+    calendar = SimpleNamespace(
+        is_running=True, last_sync=now, sync_error=None, events=[event], refresh=AsyncMock()
+    )
+    meeting = SimpleNamespace(
+        is_running=True,
+        state=SimpleNamespace(value="idle"),
+        current_meeting=None,
+        get_available_platforms=lambda: ["teams"],
+        leave_meeting=AsyncMock(),
+        toggle_mute=AsyncMock(),
+        toggle_camera=AsyncMock(),
+    )
     services = {"calendar": calendar, "meeting": meeting}
-    agent = SimpleNamespace(config=Config(), service_manager=SimpleNamespace(get_service=services.get),
-                            join_calendar_event=AsyncMock())
+    agent = SimpleNamespace(
+        config=Config(),
+        service_manager=SimpleNamespace(get_service=services.get),
+        join_calendar_event=AsyncMock(),
+    )
     widget = RoomWindow(agent)
     widget.show()
     app.processEvents()
@@ -73,3 +91,30 @@ async def test_ui_error_is_visible_and_stale_calendar_disables_join(window):
     assert "Action failed" in widget.message.text()
     assert "private" not in widget.message.text()
     assert widget.bookings.count() == 1
+
+
+def test_future_booking_explains_join_time_and_enables_when_eligible(window):
+    widget, agent, calendar, meeting = window
+    event = calendar.events[0]
+    event.start_time = datetime.now(timezone.utc) + timedelta(hours=1)
+    event.end_time = event.start_time + timedelta(hours=1)
+    widget.update_status()
+    widget.bookings.setCurrentRow(0)
+    assert not widget.buttons["join"].isEnabled()
+    assert "Join available" in widget.join_hint.text()
+    event.start_time = datetime.now(timezone.utc) - timedelta(minutes=1)
+    widget.update_status()
+    assert widget.buttons["join"].isEnabled()
+    assert not widget.join_hint.text()
+
+
+@pytest.mark.asyncio
+async def test_expected_join_rejection_reaches_screen_without_generic_error(window):
+    from croom.core.room_calendar import RoomActionError
+
+    widget, agent, calendar, meeting = window
+    widget.bookings.setCurrentRow(0)
+    agent.join_calendar_event.side_effect = RoomActionError("Join available Tue 15 Sep at 13:59.")
+    widget.buttons["join"].click()
+    await asyncio.gather(*widget.tasks)
+    assert widget.message.text() == "Join available Tue 15 Sep at 13:59."

@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qasync import QEventLoop
+from croom.core.room_calendar import RoomActionError, calendar_join_issue
 
 
 class RoomWindow(QWidget):
@@ -55,6 +56,10 @@ class RoomWindow(QWidget):
         self.bookings = QListWidget()
         self.bookings.setStyleSheet("QListWidget::item { padding: 14px; }")
         layout.addWidget(self.bookings)
+        self.join_hint = QLabel()
+        self.join_hint.setWordWrap(True)
+        self.join_hint.setStyleSheet("font-size:14px;color:#bfd0e2;")
+        layout.addWidget(self.join_hint)
         self.message = QLabel()
         self.message.setWordWrap(True)
         self.message.setTextFormat(Qt.PlainText)
@@ -82,6 +87,7 @@ class RoomWindow(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
         self.timer.start(500)
+        self.bookings.currentItemChanged.connect(lambda current, previous: self.update_status())
         self.update_status()
 
     def submit(self, action):
@@ -98,7 +104,10 @@ class RoomWindow(QWidget):
                 await action()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except RoomActionError as error:
+                self.message.setText(str(error))
+            except Exception as error:
+                logging.getLogger(__name__).warning("Room action failed (%s)", type(error).__name__)
                 self.message.setText(
                     "Action failed. Check calendar status and the meeting browser, then retry."
                 )
@@ -149,7 +158,9 @@ class RoomWindow(QWidget):
                 getattr(self.agent, "start_error", None)
                 or "Starting room services. Room setup is available now."
             )
-            self.bookings.clear()
+            with QSignalBlocker(self.bookings):
+                self.bookings.clear()
+            self.join_hint.clear()
             self._snapshot = None
             return
         if not calendar:
@@ -178,6 +189,7 @@ class RoomWindow(QWidget):
         )
         snapshot = [e.to_dict() for e in events]
         if snapshot != self._snapshot:
+            blocker = QSignalBlocker(self.bookings)
             selected = self.bookings.currentItem()
             selected_id = selected.data(Qt.UserRole) if selected else None
             self.bookings.clear()
@@ -191,6 +203,18 @@ class RoomWindow(QWidget):
                 if event.id == selected_id:
                     self.bookings.setCurrentItem(item)
             self._snapshot = snapshot
+            blocker.unblock()
+        selected = self.bookings.currentItem()
+        event = next((e for e in events if selected and e.id == selected.data(Qt.UserRole)), None)
+        issue = (
+            calendar_join_issue(
+                event, self.agent.config.meeting.join_early_minutes, self.agent.config.room.timezone
+            )
+            if selected
+            else "Select a booking to join."
+        )
+        self.join_hint.setText(issue or "")
+        self.buttons["join"].setEnabled(self.buttons["join"].isEnabled() and not issue)
 
     async def refresh(self):
         await self.service("calendar").refresh()

@@ -144,20 +144,20 @@ class CroomAgent:
 
     async def join_calendar_event(self, event_id: str):
         """Join only after a room user selects a current, freshly synced booking."""
-        from datetime import datetime, timezone
+        from croom.core.room_calendar import RoomActionError, calendar_join_issue
         calendar = self.service_manager.get_service("calendar")
         meeting = self.service_manager.get_service("meeting")
         if not calendar or not meeting or not meeting.is_running:
-            raise RuntimeError("Room services are not ready")
+            raise RoomActionError("Room services are not ready. Check the room status and retry.")
         # Revalidate against Graph, including cancellations and changed URLs.
-        await calendar.refresh()
+        try:
+            await calendar.refresh()
+        except Exception:
+            raise RoomActionError("Calendar refresh failed. Check the calendar connection and retry.") from None
         event = calendar.get_event_by_id(event_id)
-        if (not event or not event.meeting_url or event.status == "cancelled"
-                or event.response_status == "declined"
-                or event.end_time <= datetime.now(timezone.utc)):
-            raise ValueError("This booking is no longer available to join")
-        if not (event.is_happening_now() or event.is_starting_soon(self.config.meeting.join_early_minutes)):
-            raise ValueError("This booking is not ready to join yet")
+        issue = calendar_join_issue(event, self.config.meeting.join_early_minutes, self.config.room.timezone)
+        if issue:
+            raise RoomActionError(issue)
         info = await meeting.join_meeting(event.meeting_url)
         info.title = event.title
         info.calendar_event_id = event.id
