@@ -13,7 +13,6 @@ Supports:
 __version__ = "2.0.0-dev"
 __author__ = "Croom Team"
 
-from croom.core.agent import CroomAgent
 from croom.core.config import Config
 from croom.platform.detector import PlatformDetector
 
@@ -23,3 +22,12 @@ __all__ = [
     "PlatformDetector",
     "__version__",
 ]
+
+
+def __getattr__(name):
+    # Preserve public imports without preloading the python -m entry point.
+    if name == "CroomAgent":
+        from croom.core.agent import CroomAgent
+        globals()[name] = CroomAgent
+        return CroomAgent
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

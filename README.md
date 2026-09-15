@@ -26,6 +26,13 @@
 
 ---
 
+## Fork development status
+
+The startup compatibility repair is included in this fork. Microsoft 365 room-calendar
+configuration and the real UI-to-agent connection still need implementation. See the
+[startup fix and development handoff](docs/guides/startup-fix-and-handoff.md) for the
+verified scope, regression tests, and next steps.
+
 ## 🇫🇷 Digital Sovereignty & Data Privacy
 
 > **Croom is a French initiative** committed to digital resilience, data privacy, and technological independence.
@@ -478,3 +485,9 @@ We believe in giving back to the open-source community. Improvements that benefi
 Made with ❤️ by the Croom Community
 
 </div>
+
+### Microsoft 365 room-calendar development
+
+The agent-backed room UI and app-only Microsoft integration are documented in
+[Microsoft 365 room calendar](docs/guides/microsoft-365-room-calendar.md).
+Local tests do not yet establish live calendar access or an attended Teams call on the Pi.

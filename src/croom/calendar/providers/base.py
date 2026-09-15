@@ -111,15 +111,18 @@ def detect_meeting_platform(url: str) -> MeetingPlatform:
     if not url:
         return MeetingPlatform.UNKNOWN
 
-    url_lower = url.lower()
-
-    if "meet.google.com" in url_lower or "g.co/meet" in url_lower:
+    from urllib.parse import urlsplit
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        return MeetingPlatform.UNKNOWN
+    host = (parsed.hostname or "").lower()
+    if host in ("meet.google.com", "g.co"):
         return MeetingPlatform.GOOGLE_MEET
-    elif "teams.microsoft.com" in url_lower or "teams.live.com" in url_lower:
+    if host in ("teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"):
         return MeetingPlatform.MICROSOFT_TEAMS
-    elif "zoom.us" in url_lower or "zoomgov.com" in url_lower:
+    if any(host == domain or host.endswith("." + domain) for domain in ("zoom.us", "zoomgov.com")):
         return MeetingPlatform.ZOOM
-    elif "webex.com" in url_lower:
+    if host == "webex.com" or host.endswith(".webex.com"):
         return MeetingPlatform.WEBEX
 
     return MeetingPlatform.UNKNOWN
@@ -138,26 +141,14 @@ def extract_meeting_url(text: str) -> Optional[str]:
     if not text:
         return None
 
-    # Patterns for various meeting platforms
-    patterns = [
-        # Google Meet
-        r'https?://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}',
-        # Microsoft Teams
-        r'https?://teams\.microsoft\.com/l/meetup-join/[^\s<>"]+',
-        r'https?://teams\.live\.com/meet/[^\s<>"]+',
-        # Zoom
-        r'https?://[\w.-]*zoom\.us/j/\d+[^\s<>"]*',
-        r'https?://[\w.-]*zoomgov\.com/j/\d+[^\s<>"]*',
-        # Webex
-        r'https?://[\w.-]*webex\.com/[\w./]+[^\s<>"]*',
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(0)
-
+    # Parse whole URLs before inspecting hosts, so attacker-controlled lookalikes
+    # and links embedded in another URL cannot become browser join targets.
+    for match in re.finditer(r"https?://[^\s<>\"']+", text, re.IGNORECASE):
+        url = match.group(0).rstrip(".,;)")
+        if detect_meeting_platform(url) != MeetingPlatform.UNKNOWN:
+            return url
     return None
+
 
 
 class CalendarProvider(ABC):

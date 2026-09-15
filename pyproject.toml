@@ -45,8 +45,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+microsoft = ["msal>=1.23,<2"]
 ui = [
     "PySide6>=6.6.0",
+    "qasync>=0.27,<1",
 ]
 coral = [
     "tflite-runtime>=2.14.0",
@@ -71,7 +73,7 @@ Issues = "https://github.com/your-org/croom/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["croom*"]
+include = ["croom", "croom.*", "croom_ui", "croom_ui.*"]
 
 [tool.setuptools.package-data]
 croom = ["py.typed"]

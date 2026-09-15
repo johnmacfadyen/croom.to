@@ -64,6 +64,10 @@ class CalendarService:
         self._poll_task: Optional[asyncio.Task] = None
         self._running = False
 
+        self.last_sync = None
+        self.sync_error = None
+        self._fetch_lock = asyncio.Lock()
+
         # Track notified meetings to avoid duplicate notifications
         self._notified_meetings: Set[str] = set()
 
@@ -145,6 +149,9 @@ class CalendarService:
 
         # Initial fetch
         await self._fetch_events()
+        if self.sync_error:
+            raise RuntimeError(self.sync_error)
+        self._check_upcoming_meetings()
 
         # Start polling
         self._poll_task = asyncio.create_task(self._poll_loop())
@@ -177,6 +184,10 @@ class CalendarService:
                 logger.error(f"Calendar poll error: {e}")
 
     async def _fetch_events(self) -> None:
+        async with self._fetch_lock:
+            await self._fetch_events_locked()
+
+    async def _fetch_events_locked(self) -> None:
         """Fetch events from all calendars."""
         if not self._provider or not self._calendar_ids:
             return
@@ -197,11 +208,13 @@ class CalendarService:
 
                 for event in events:
                     # Skip cancelled events
-                    if event.status == 'cancelled':
+                    if event.status == 'cancelled' or event.response_status == 'declined':
                         continue
                     all_events[event.id] = event
 
             self._events = all_events
+            self.last_sync = datetime.now(timezone.utc)
+            self.sync_error = None
 
             # Update next meeting
             self._update_next_meeting()
@@ -216,7 +229,8 @@ class CalendarService:
             logger.debug(f"Fetched {len(all_events)} calendar events")
 
         except Exception as e:
-            logger.error(f"Failed to fetch calendar events: {e}")
+            self.sync_error = "Calendar sync failed; showing previous bookings"
+            logger.error(self.sync_error)
 
     def _update_next_meeting(self) -> None:
         """Update the next meeting reference."""
@@ -238,6 +252,8 @@ class CalendarService:
     def _check_upcoming_meetings(self) -> None:
         """Check for meetings starting soon and trigger notifications."""
         now = datetime.now(timezone.utc)
+        if self.sync_error:
+            return
 
         for event in self._events.values():
             # Skip if no meeting URL
@@ -350,6 +366,9 @@ class CalendarService:
     async def refresh(self) -> None:
         """Force refresh of calendar events."""
         await self._fetch_events()
+        if self.sync_error:
+            raise RuntimeError(self.sync_error)
+        self._check_upcoming_meetings()
         logger.info("Calendar events refreshed")
 
     def get_event_by_id(self, event_id: str) -> Optional[CalendarEvent]:
@@ -372,6 +391,8 @@ class CalendarService:
         """Shutdown the calendar service."""
         await self.stop()
         self._provider = None
+        self._next_meeting = None
+        self.last_sync = None
         self._events.clear()
         self._notified_meetings.clear()
         logger.info("Calendar service shutdown")

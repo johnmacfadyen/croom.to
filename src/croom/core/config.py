@@ -33,6 +33,7 @@ class MeetingConfig:
     platforms: List[str] = field(default_factory=lambda: ["google_meet", "teams", "zoom"])
     default_platform: str = "auto"
     join_early_minutes: int = 1
+    join_policy: str = "manual"  # Calendar bookings never authorize automatic joining
     auto_leave: bool = True
     camera_default_on: bool = True
     mic_default_on: bool = True
@@ -46,6 +47,33 @@ class CalendarConfig:
     google_credentials_path: str = ""
     microsoft_tenant_id: str = ""
     microsoft_client_id: str = ""
+    microsoft_room_mailbox: str = ""
+    microsoft_auth_mode: str = ""  # Explicitly select client_credentials
+    microsoft_credentials_path: str = ""
+
+    def validate(self) -> None:
+        if not isinstance(self.sync_interval_seconds, int) or self.sync_interval_seconds < 10:
+            raise ValueError("Calendar sync interval must be at least 10 seconds")
+        fields = (
+            self.microsoft_tenant_id, self.microsoft_client_id, self.microsoft_room_mailbox,
+            self.microsoft_auth_mode, self.microsoft_credentials_path,
+        )
+        if not any(fields):
+            return
+        if "microsoft" not in self.providers:
+            raise ValueError("Microsoft configuration requires the microsoft provider")
+        if not all(isinstance(value, str) and value.strip() for value in fields):
+            raise ValueError("Microsoft calendar requires tenant, client, room mailbox, auth mode and credential path")
+        if any(char in self.microsoft_room_mailbox for char in "/\\?#") or "@" not in self.microsoft_room_mailbox:
+            raise ValueError("Microsoft room mailbox must be an email address")
+        if self.microsoft_auth_mode != "client_credentials":
+            raise ValueError("Microsoft room calendar supports only client_credentials authentication")
+        if self.microsoft_tenant_id in ("common", "organizations", "consumers"):
+            raise ValueError("Microsoft room calendar requires a specific tenant")
+        if not Path(self.microsoft_credentials_path).is_absolute():
+            raise ValueError("Microsoft credential path must be absolute")
+        if self.google_credentials_path and "google" in self.providers:
+            raise ValueError("Select one configured calendar provider per room")
 
 
 @dataclass
@@ -198,12 +226,19 @@ class Config:
                 "default_platform": self.meeting.default_platform,
                 "join_early_minutes": self.meeting.join_early_minutes,
                 "auto_leave": self.meeting.auto_leave,
+                "join_policy": self.meeting.join_policy,
                 "camera_default_on": self.meeting.camera_default_on,
                 "mic_default_on": self.meeting.mic_default_on,
             },
             "calendar": {
                 "providers": self.calendar.providers,
                 "sync_interval_seconds": self.calendar.sync_interval_seconds,
+                "google_credentials_path": self.calendar.google_credentials_path,
+                "microsoft_tenant_id": self.calendar.microsoft_tenant_id,
+                "microsoft_client_id": self.calendar.microsoft_client_id,
+                "microsoft_room_mailbox": self.calendar.microsoft_room_mailbox,
+                "microsoft_auth_mode": self.calendar.microsoft_auth_mode,
+                "microsoft_credentials_path": self.calendar.microsoft_credentials_path,
             },
             "ai": {
                 "enabled": self.ai.enabled,
@@ -288,8 +323,8 @@ def load_config(path: Optional[str] = None) -> Config:
                     data = yaml.safe_load(f)
                     if data:
                         return Config.from_dict(data)
-            except Exception as e:
-                print(f"Warning: Failed to load config from {config_path}: {e}")
+            except Exception:
+                raise ValueError("Failed to load configuration; check YAML and field names") from None
 
     # Return default config
     return Config()

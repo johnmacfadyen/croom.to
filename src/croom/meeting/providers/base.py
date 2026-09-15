@@ -248,15 +248,6 @@ def detect_platform(url: str) -> Optional[str]:
     Returns:
         Platform name or None
     """
-    url_lower = url.lower()
-
-    if "meet.google.com" in url_lower or "g.co/meet" in url_lower:
-        return "google_meet"
-    elif "teams.microsoft.com" in url_lower or "teams.live.com" in url_lower:
-        return "teams"
-    elif "zoom.us" in url_lower or "zoomgov.com" in url_lower:
-        return "zoom"
-    elif "webex.com" in url_lower:
-        return "webex"
-
-    return None
+    from croom.calendar.providers.base import detect_meeting_platform, MeetingPlatform
+    platform = detect_meeting_platform(url)
+    return None if platform == MeetingPlatform.UNKNOWN else platform.value

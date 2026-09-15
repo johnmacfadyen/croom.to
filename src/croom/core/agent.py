@@ -10,6 +10,10 @@ import signal
 import sys
 from typing import Optional, Dict, Any
 
+from croom.core.startup_compat import (
+    ComponentService, audio_config, video_config, display_config,
+    calendar_config, check_supported_config,
+)
 from croom.core.config import Config, load_config
 from croom.core.service import ServiceManager, Service, ServiceState
 from croom.platform.detector import PlatformDetector, PlatformInfo
@@ -68,6 +72,8 @@ class CroomAgent:
         # Import services dynamically to avoid circular imports
         # and allow optional dependencies
 
+        check_supported_config(self.config)
+
         # AI Service (if enabled)
         if self.config.ai.enabled and not self.config.ai.privacy_mode:
             try:
@@ -81,8 +87,8 @@ class CroomAgent:
         # Audio Service
         try:
             from croom.audio.service import AudioService
-            audio_service = AudioService(self.config)
-            self.service_manager.register(audio_service, dependencies=["ai"] if self.config.ai.enabled else None)
+            audio_service = ComponentService("audio", AudioService(audio_config(self.config)))
+            self.service_manager.register(audio_service, dependencies=["ai"] if self.service_manager.get_service("ai") else None)
             logger.info("Audio service registered")
         except ImportError as e:
             logger.warning(f"Audio service not available: {e}")
@@ -90,8 +96,8 @@ class CroomAgent:
         # Video Service
         try:
             from croom.video.service import VideoService
-            video_service = VideoService(self.config, self.capabilities)
-            self.service_manager.register(video_service, dependencies=["ai"] if self.config.ai.enabled else None)
+            video_service = ComponentService("video", VideoService(video_config(self.config)))
+            self.service_manager.register(video_service, dependencies=["ai"] if self.service_manager.get_service("ai") else None)
             logger.info("Video service registered")
         except ImportError as e:
             logger.warning(f"Video service not available: {e}")
@@ -99,7 +105,7 @@ class CroomAgent:
         # Display Service
         try:
             from croom.display.service import DisplayService
-            display_service = DisplayService(self.config, self.capabilities)
+            display_service = ComponentService("display", DisplayService(display_config(self.config)))
             self.service_manager.register(display_service)
             logger.info("Display service registered")
         except ImportError as e:
@@ -117,9 +123,11 @@ class CroomAgent:
         # Calendar Service
         try:
             from croom.calendar.service import CalendarService
-            calendar_service = CalendarService(self.config)
-            self.service_manager.register(calendar_service)
-            logger.info("Calendar service registered")
+            calendar_settings = calendar_config(self.config)
+            if calendar_settings is not None:
+                calendar_service = ComponentService("calendar", CalendarService(calendar_settings))
+                self.service_manager.register(calendar_service)
+                logger.info("Calendar service registered")
         except ImportError as e:
             logger.warning(f"Calendar service not available: {e}")
 
@@ -132,6 +140,29 @@ class CroomAgent:
                 logger.info("Dashboard client registered")
             except ImportError as e:
                 logger.warning(f"Dashboard client not available: {e}")
+
+    async def join_calendar_event(self, event_id: str):
+        """Join only after a room user selects a current, freshly synced booking."""
+        from datetime import datetime, timezone
+        calendar = self.service_manager.get_service("calendar")
+        meeting = self.service_manager.get_service("meeting")
+        if not calendar or not meeting or not meeting.is_running:
+            raise RuntimeError("Room services are not ready")
+        # Revalidate against Graph, including cancellations and changed URLs.
+        await calendar.refresh()
+        event = calendar.get_event_by_id(event_id)
+        if (not event or not event.meeting_url or event.status == "cancelled"
+                or event.response_status == "declined"
+                or event.end_time <= datetime.now(timezone.utc)):
+            raise ValueError("This booking is no longer available to join")
+        if not (event.is_happening_now() or event.is_starting_soon(self.config.meeting.join_early_minutes)):
+            raise ValueError("This booking is not ready to join yet")
+        info = await meeting.join_meeting(event.meeting_url)
+        info.title = event.title
+        info.calendar_event_id = event.id
+        info.start_time = event.start_time
+        info.end_time = event.end_time
+        return info
 
     async def start(self) -> None:
         """Start the Croom agent and all services."""
@@ -152,9 +183,7 @@ class CroomAgent:
             # Start all services
             success = await self.service_manager.start_all()
             if not success:
-                logger.error("Failed to start all services")
-                self._running = False
-                return
+                raise RuntimeError("Failed to start all services; see preceding logs")
 
             logger.info("Croom Agent started successfully")
 
@@ -162,7 +191,7 @@ class CroomAgent:
             await self.service_manager.wait_for_shutdown()
 
         except Exception as e:
-            logger.error(f"Agent error: {e}")
+            logger.exception("Agent error")
             raise
         finally:
             await self.stop()
@@ -197,7 +226,7 @@ class CroomAgent:
             },
             "capabilities": self.capabilities.to_dict(),
             "services": {
-                name: status.__dict__
+                name: status if isinstance(status, dict) else status.__dict__
                 for name, status in self.service_manager.get_status().items()
             },
             "config": {

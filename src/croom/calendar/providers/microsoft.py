@@ -1,57 +1,43 @@
-"""
-Microsoft 365 Calendar provider.
+"""Read a room mailbox using app-only Microsoft Graph calendarView access."""
 
-Uses Microsoft Graph API to fetch events from Outlook/Microsoft 365.
-"""
-
+import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta, timezone
+from html import unescape
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote, unquote, urlsplit
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
 from croom.calendar.providers.base import (
-    CalendarProvider,
-    CalendarEvent,
-    MeetingPlatform,
-    detect_meeting_platform,
-    extract_meeting_url,
+    CalendarEvent, CalendarProvider, detect_meeting_platform, extract_meeting_url,
 )
+
+try:
+    import msal
+except ImportError:
+    msal = None
 
 logger = logging.getLogger(__name__)
 
-# Microsoft authentication library
-try:
-    import msal
-    MSAL_AVAILABLE = True
-except ImportError:
-    MSAL_AVAILABLE = False
+
+class CalendarSyncError(RuntimeError):
+    """A failed/incomplete response must not look like an empty calendar."""
 
 
 class MicrosoftCalendarProvider(CalendarProvider):
-    """
-    Microsoft 365 Calendar provider.
-
-    Uses Microsoft Graph API for calendar access.
-    Supports delegated (user) and application (service) permissions.
-    """
-
-    # API endpoints
     GRAPH_API_ENDPOINT = "https://graph.microsoft.com/v1.0"
     AUTHORITY = "https://login.microsoftonline.com"
-
-    # Required scopes
-    SCOPES = [
-        "Calendars.Read",
-    ]
+    SCOPES = ["https://graph.microsoft.com/.default"]
 
     def __init__(self):
         super().__init__()
-        self._access_token: Optional[str] = None
-        self._token_expiry: Optional[datetime] = None
+        self._access_token = None
+        self._token_expiry = None
         self._msal_app = None
-        self._tenant_id: Optional[str] = None
-        self._user_email: Optional[str] = None
+        self._room_mailbox = None
+        self._token_lock = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -62,317 +48,177 @@ class MicrosoftCalendarProvider(CalendarProvider):
         return "Microsoft 365"
 
     async def authenticate(self, credentials: Dict[str, Any]) -> bool:
-        """
-        Authenticate with Microsoft Graph API.
-
-        Supports:
-        1. Client credentials (app-only) - for service accounts
-        2. Device code flow - for user authentication
-        3. Username/password (ROPC) - legacy, not recommended
-
-        Args:
-            credentials: Dict with:
-                - 'client_id': Azure AD app client ID
-                - 'client_secret': Client secret (for app-only)
-                - 'tenant_id': Azure AD tenant ID
-                - 'user_email': User email (for delegated access)
-
-        Returns:
-            True if authentication successful
-        """
-        if not MSAL_AVAILABLE:
-            logger.error("MSAL library not installed: pip install msal")
+        self._authenticated = False
+        self._access_token = None
+        self._msal_app = None
+        required = ("tenant_id", "client_id", "client_secret", "room_mailbox")
+        if (credentials.get("auth_mode") != "client_credentials"
+                or not all(isinstance(credentials.get(k), str) and credentials[k].strip()
+                           for k in required)
+                or credentials.get("tenant_id") in ("common", "organizations", "consumers")):
+            logger.error("Microsoft room calendar requires explicit app credentials and mailbox")
             return False
-
+        if msal is None:
+            logger.error("Install croom[microsoft] for Microsoft calendar access")
+            return False
+        self._room_mailbox = credentials["room_mailbox"]
         try:
-            client_id = credentials.get('client_id')
-            client_secret = credentials.get('client_secret')
-            tenant_id = credentials.get('tenant_id', 'common')
-            user_email = credentials.get('user_email')
-
-            if not client_id:
-                logger.error("client_id required for Microsoft authentication")
-                return False
-
-            self._tenant_id = tenant_id
-            self._user_email = user_email
-            authority = f"{self.AUTHORITY}/{tenant_id}"
-
-            # App-only (client credentials) flow
-            if client_secret and not user_email:
-                self._msal_app = msal.ConfidentialClientApplication(
-                    client_id,
-                    authority=authority,
-                    client_credential=client_secret,
-                )
-
-                # Acquire token for app
-                result = self._msal_app.acquire_token_for_client(
-                    scopes=["https://graph.microsoft.com/.default"]
-                )
-
-            # Delegated (user) flow with device code
-            elif user_email:
-                self._msal_app = msal.PublicClientApplication(
-                    client_id,
-                    authority=authority,
-                )
-
-                # Try to get cached token first
-                accounts = self._msal_app.get_accounts(username=user_email)
-                if accounts:
-                    result = self._msal_app.acquire_token_silent(
-                        self.SCOPES,
-                        account=accounts[0]
-                    )
-                else:
-                    # Need interactive authentication
-                    # For device, use device code flow
-                    flow = self._msal_app.initiate_device_flow(scopes=self.SCOPES)
-                    if "user_code" in flow:
-                        logger.info(f"Device code: {flow['user_code']}")
-                        logger.info(f"Go to: {flow['verification_uri']}")
-                        result = self._msal_app.acquire_token_by_device_flow(flow)
-                    else:
-                        logger.error("Failed to initiate device flow")
-                        return False
-
-            else:
-                logger.error("Need either client_secret (app) or user_email (delegated)")
-                return False
-
-            if "access_token" in result:
-                self._access_token = result["access_token"]
-                self._token_expiry = datetime.now(timezone.utc) + timedelta(
-                    seconds=result.get("expires_in", 3600)
-                )
-                self._authenticated = True
-                self._credentials = credentials
-                logger.info("Microsoft 365 authentication successful")
-                return True
-            else:
-                logger.error(f"Authentication failed: {result.get('error_description')}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Microsoft authentication failed: {e}")
-            self._authenticated = False
+            # MSAL performs synchronous discovery and token requests; keep Qt and
+            # the service loop responsive. Reuse its token cache on refresh.
+            self._msal_app = await asyncio.to_thread(
+                msal.ConfidentialClientApplication,
+                credentials["client_id"],
+                authority=f"{self.AUTHORITY}/{quote(credentials['tenant_id'], safe='')}",
+                client_credential=credentials["client_secret"],
+                timeout=30,
+            )
+            return await self.refresh_auth()
+        except Exception:
+            logger.error("Microsoft authentication failed; check tenant, credentials and network")
             return False
 
     async def refresh_auth(self) -> bool:
-        """Refresh authentication tokens."""
-        if not self._msal_app or not self._credentials:
-            return False
+        async with self._token_lock:
+            if (self._access_token and self._token_expiry
+                    and datetime.now(timezone.utc) < self._token_expiry - timedelta(minutes=5)):
+                return True
+            if self._msal_app is None:
+                return False
+            try:
+                result = await asyncio.to_thread(
+                    self._msal_app.acquire_token_for_client, scopes=self.SCOPES,
+                )
+                if not result or not result.get("access_token"):
+                    raise ValueError("No token")
+                self._access_token = result["access_token"]
+                self._token_expiry = datetime.now(timezone.utc) + timedelta(
+                    seconds=int(result.get("expires_in", 3600)))
+                self._authenticated = True
+                return True
+            except Exception:
+                # Never log MSAL responses, exceptions, bearer tokens or credentials.
+                self._access_token = None
+                self._authenticated = False
+                logger.error("Microsoft token acquisition failed")
+                return False
 
-        try:
-            # Check if token needs refresh
-            if self._token_expiry and datetime.now(timezone.utc) < self._token_expiry - timedelta(minutes=5):
-                return True  # Token still valid
+    def _request_url(self, endpoint: str) -> str:
+        url = (f"{self.GRAPH_API_ENDPOINT}{endpoint}"
+               if endpoint.startswith("/") else endpoint)
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or parsed.netloc != "graph.microsoft.com"
+                or not unquote(parsed.path).startswith("/v1.0/users/" + self._room_mailbox + "/")
+                or parsed.fragment):
+            raise CalendarSyncError("Graph returned an invalid paging URL")
+        return url
 
-            # Re-authenticate
-            return await self.authenticate(self._credentials)
-
-        except Exception as e:
-            logger.error(f"Failed to refresh Microsoft tokens: {e}")
-            return False
-
-    async def _make_request(
-        self,
-        endpoint: str,
-        method: str = "GET",
-        params: Optional[Dict] = None
-    ) -> Optional[Dict]:
-        """Make authenticated request to Graph API."""
-        if not self._access_token:
-            await self.refresh_auth()
-
-        if not self._access_token:
-            return None
-
-        url = f"{self.GRAPH_API_ENDPOINT}{endpoint}"
+    async def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
+        url = self._request_url(endpoint)
+        if not await self.refresh_auth():
+            raise CalendarSyncError("Microsoft calendar authentication unavailable")
         headers = {
             "Authorization": f"Bearer {self._access_token}",
-            "Content-Type": "application/json",
+            "Prefer": 'outlook.timezone="UTC", IdType="ImmutableId"',
         }
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.get(url, headers=headers, params=params, allow_redirects=False) as resp:
+                    if resp.status != 200:
+                        # Do not log Graph response bodies (may contain meeting details).
+                        if resp.status == 401:
+                            self._access_token = None
+                            self._authenticated = False
+                            # Evict MSAL's cached token before the next poll.
+                            await asyncio.to_thread(self._msal_app.remove_tokens_for_client)
+                        raise CalendarSyncError(f"Microsoft calendar request failed (HTTP {resp.status})")
+                    result = await resp.json()
+                    if not isinstance(result, dict) or not isinstance(result.get("value"), list):
+                        raise CalendarSyncError("Invalid Microsoft calendar response")
+                    return result
+        except CalendarSyncError:
+            raise
+        except Exception:
+            raise CalendarSyncError("Microsoft calendar request failed; check network") from None
 
-        async with aiohttp.ClientSession() as session:
-            async with session.request(method, url, headers=headers, params=params) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    error = await resp.text()
-                    logger.error(f"Graph API error {resp.status}: {error}")
-                    return None
+    async def _items(self, endpoint, params=None):
+        seen = set()
+        while endpoint:
+            if endpoint in seen or len(seen) >= 1000:
+                raise CalendarSyncError("Microsoft calendar paging did not complete")
+            seen.add(endpoint)
+            result = await self._make_request(endpoint, params=params)
+            for item in result["value"]:
+                yield item
+            endpoint = result.get("@odata.nextLink")
+            params = None  # Graph nextLink already contains all query parameters.
+
+    @property
+    def _base(self):
+        if not self._room_mailbox:
+            raise CalendarSyncError("Microsoft room mailbox is not configured")
+        return f"/users/{quote(self._room_mailbox, safe='')}"
 
     async def get_calendars(self) -> List[Dict[str, str]]:
-        """Get list of available calendars."""
-        if not self._authenticated:
-            return []
+        return [{"id": item["id"], "name": item.get("name", "Calendar"),
+                 "primary": item.get("isDefaultCalendar", False)}
+                async for item in self._items(f"{self._base}/calendars")]
 
-        try:
-            # For delegated permissions
-            endpoint = "/me/calendars"
+    async def get_events(self, calendar_id: str, time_min: datetime,
+                         time_max: datetime, max_results: int = 100) -> List[CalendarEvent]:
+        # max_results controls page size, not completeness of the sync window.
+        if max_results < 1:
+            raise ValueError("max_results must be positive")
+        time_min = time_min.replace(tzinfo=time_min.tzinfo or timezone.utc)
+        time_max = time_max.replace(tzinfo=time_max.tzinfo or timezone.utc)
+        calendar = "calendar" if calendar_id == "default" else f"calendars/{quote(calendar_id, safe='')}"
+        params = {
+            "startDateTime": time_min.isoformat(), "endDateTime": time_max.isoformat(),
+            "$orderby": "start/dateTime", "$top": str(min(max_results, 1000)),
+            "$select": "id,subject,start,end,organizer,body,bodyPreview,location,onlineMeeting,"
+                       "onlineMeetingUrl,isAllDay,type,seriesMasterId,isCancelled,attendees,responseStatus",
+        }
+        events = {}
+        async for item in self._items(f"{self._base}/{calendar}/calendarView", params):
+            event = self._parse_event(item, calendar_id)
+            if event is None:
+                raise CalendarSyncError("Microsoft calendar contained an invalid event")
+            events[event.id] = event
+        return sorted(events.values(), key=lambda e: e.start_time)
 
-            # For app permissions, need to specify user
-            if self._user_email and self._credentials.get('client_secret'):
-                endpoint = f"/users/{self._user_email}/calendars"
-
-            result = await self._make_request(endpoint)
-            if not result:
-                return []
-
-            calendars = result.get('value', [])
-            return [
-                {
-                    'id': cal['id'],
-                    'name': cal.get('name', 'Calendar'),
-                    'primary': cal.get('isDefaultCalendar', False),
-                }
-                for cal in calendars
-            ]
-
-        except Exception as e:
-            logger.error(f"Failed to list calendars: {e}")
-            return []
-
-    async def get_events(
-        self,
-        calendar_id: str,
-        time_min: datetime,
-        time_max: datetime,
-        max_results: int = 100
-    ) -> List[CalendarEvent]:
-        """Get events from Microsoft 365 Calendar."""
-        if not self._authenticated:
-            return []
-
-        try:
-            # Ensure timezone-aware
-            if time_min.tzinfo is None:
-                time_min = time_min.replace(tzinfo=timezone.utc)
-            if time_max.tzinfo is None:
-                time_max = time_max.replace(tzinfo=timezone.utc)
-
-            # Build endpoint
-            base = "/me"
-            if self._user_email and self._credentials.get('client_secret'):
-                base = f"/users/{self._user_email}"
-
-            endpoint = f"{base}/calendars/{calendar_id}/events"
-
-            params = {
-                "$filter": f"start/dateTime ge '{time_min.isoformat()}' and start/dateTime le '{time_max.isoformat()}'",
-                "$orderby": "start/dateTime",
-                "$top": str(max_results),
-                "$select": "id,subject,start,end,organizer,bodyPreview,location,onlineMeeting,onlineMeetingUrl,isAllDay,recurrence,isCancelled,attendees,responseStatus",
-            }
-
-            result = await self._make_request(endpoint, params=params)
-            if not result:
-                return []
-
-            events = []
-            for item in result.get('value', []):
-                event = self._parse_event(item, calendar_id)
-                if event:
-                    events.append(event)
-
-            logger.debug(f"Fetched {len(events)} events from {calendar_id}")
-            return events
-
-        except Exception as e:
-            logger.error(f"Failed to fetch events: {e}")
-            return []
+    @staticmethod
+    def _parse_time(value):
+        result = datetime.fromisoformat(value["dateTime"].replace("Z", "+00:00"))
+        if result.tzinfo is None:
+            # Graph is explicitly requested in UTC. Also accept IANA timezone
+            # responses; unknown Windows timezone names fail instead of shifting a booking.
+            zone = value.get("timeZone", "UTC")
+            result = result.replace(tzinfo=ZoneInfo(zone))
+        return result.astimezone(timezone.utc)
 
     def _parse_event(self, item: Dict, calendar_id: str) -> Optional[CalendarEvent]:
-        """Parse Microsoft Graph event to CalendarEvent."""
         try:
-            # Parse times
-            start = item.get('start', {})
-            end = item.get('end', {})
-
-            # Microsoft returns times in event's timezone
-            start_dt = start.get('dateTime', '')
-            end_dt = end.get('dateTime', '')
-
-            if start_dt:
-                # Add Z if no timezone info (assume UTC from API)
-                if not start_dt.endswith('Z') and '+' not in start_dt:
-                    start_dt += 'Z'
-                start_time = datetime.fromisoformat(start_dt.replace('Z', '+00:00'))
-            else:
-                return None
-
-            if end_dt:
-                if not end_dt.endswith('Z') and '+' not in end_dt:
-                    end_dt += 'Z'
-                end_time = datetime.fromisoformat(end_dt.replace('Z', '+00:00'))
-            else:
-                return None
-
-            # Get meeting URL
             meeting_url = None
-            meeting_platform = MeetingPlatform.UNKNOWN
-
-            # Check onlineMeeting first (Teams)
-            online_meeting = item.get('onlineMeeting')
-            if online_meeting:
-                join_url = online_meeting.get('joinUrl')
-                if join_url:
-                    meeting_url = join_url
-                    meeting_platform = MeetingPlatform.MICROSOFT_TEAMS
-
-            # Also check onlineMeetingUrl
-            if not meeting_url:
-                meeting_url = item.get('onlineMeetingUrl')
+            online = item.get("onlineMeeting") or {}
+            for candidate in (online.get("joinUrl"), item.get("onlineMeetingUrl"),
+                              (item.get("location") or {}).get("displayName"),
+                              (item.get("body") or {}).get("content"), item.get("bodyPreview")):
+                meeting_url = extract_meeting_url(unescape(candidate or ""))
                 if meeting_url:
-                    meeting_platform = detect_meeting_platform(meeting_url)
-
-            # Check location and body for other meeting URLs
-            if not meeting_url:
-                location = item.get('location', {}).get('displayName', '')
-                body = item.get('bodyPreview', '')
-
-                url = extract_meeting_url(location) or extract_meeting_url(body)
-                if url:
-                    meeting_url = url
-                    meeting_platform = detect_meeting_platform(url)
-
-            # Get organizer
-            organizer = item.get('organizer', {}).get('emailAddress', {}).get('address', '')
-
-            # Get attendees
-            attendees = [
-                a.get('emailAddress', {}).get('address', '')
-                for a in item.get('attendees', [])
-            ]
-
-            # Get response status
-            response_status = item.get('responseStatus', {}).get('response', 'accepted')
-
-            # Check if cancelled
-            status = 'cancelled' if item.get('isCancelled') else 'confirmed'
-
-            event = CalendarEvent(
-                id=item['id'],
-                title=item.get('subject', 'No Title'),
-                start_time=start_time,
-                end_time=end_time,
-                meeting_url=meeting_url,
-                meeting_platform=meeting_platform,
-                organizer=organizer,
-                description=item.get('bodyPreview', ''),
-                location=item.get('location', {}).get('displayName', ''),
-                calendar_id=calendar_id,
-                is_all_day=item.get('isAllDay', False),
-                is_recurring=bool(item.get('recurrence')),
-                status=status,
-                attendees=attendees,
-                response_status=response_status,
+                    break
+            return CalendarEvent(
+                id=item["id"], title=item.get("subject") or "No title",
+                start_time=self._parse_time(item["start"]), end_time=self._parse_time(item["end"]),
+                meeting_url=meeting_url, meeting_platform=detect_meeting_platform(meeting_url),
+                organizer=(item.get("organizer") or {}).get("emailAddress", {}).get("address", ""),
+                description=item.get("bodyPreview", ""),
+                location=(item.get("location") or {}).get("displayName", ""),
+                calendar_id=calendar_id, is_all_day=item.get("isAllDay", False),
+                is_recurring=item.get("type") in ("occurrence", "exception", "seriesMaster"),
+                recurrence_id=item.get("seriesMasterId"),
+                status="cancelled" if item.get("isCancelled") else "confirmed",
+                attendees=[a.get("emailAddress", {}).get("address", "") for a in item.get("attendees", [])],
+                response_status=(item.get("responseStatus") or {}).get("response", "none"),
             )
-
-            return event
-
-        except Exception as e:
-            logger.error(f"Failed to parse event: {e}")
+        except (KeyError, ValueError, TypeError, AttributeError):
+            logger.error("Could not parse Microsoft calendar event")
             return None

@@ -187,9 +187,8 @@ class TestLoadConfig:
         invalid_config = temp_dir / "invalid.yaml"
         invalid_config.write_text("invalid: yaml: content: {{")
 
-        config = load_config(str(invalid_config))
-        # Should return default config on error
-        assert isinstance(config, Config)
+        with pytest.raises(ValueError, match="Failed to load configuration"):
+            load_config(str(invalid_config))
 
     def test_load_empty_file(self, temp_dir):
         """Test loading empty file returns default config."""

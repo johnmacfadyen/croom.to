@@ -57,10 +57,8 @@ class TeamsProvider(MeetingProvider):
     @classmethod
     def can_handle_url(cls, url: str) -> bool:
         """Check if URL is a Teams meeting link."""
-        for pattern in cls.TEAMS_URL_PATTERNS:
-            if pattern.search(url):
-                return True
-        return "teams.microsoft.com" in url.lower() or "teams.live.com" in url.lower()
+        from croom.meeting.providers.base import detect_platform
+        return detect_platform(url) == "teams"
 
     @classmethod
     def extract_meeting_id(cls, url: str) -> Optional[str]:
@@ -95,8 +93,6 @@ class TeamsProvider(MeetingProvider):
             args=[
                 "--use-fake-ui-for-media-stream",
                 "--disable-infobars",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--window-size=1920,1080",
             ]
@@ -104,8 +100,7 @@ class TeamsProvider(MeetingProvider):
 
         self._context = await self._browser.new_context(
             permissions=["camera", "microphone"],
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            viewport={"width": 1920, "height": 1080}
         )
 
         self._page = await self._context.new_page()
@@ -146,6 +141,8 @@ class TeamsProvider(MeetingProvider):
         if not self._page:
             raise RuntimeError("Provider not initialized")
 
+        if not self.can_handle_url(meeting_url):
+            raise ValueError("Unsupported Teams meeting URL")
         meeting_id = self.extract_meeting_id(meeting_url)
 
         self._current_meeting = MeetingInfo(
@@ -176,14 +173,17 @@ class TeamsProvider(MeetingProvider):
             # Wait for connection
             await self._wait_for_connection()
 
+            _, self._current_meeting.is_camera_on = await self._media_control("camera")
+            _, microphone_on = await self._media_control("microphone")
+            self._current_meeting.is_muted = not microphone_on
             self._set_state(MeetingState.CONNECTED)
             logger.info(f"Connected to Teams meeting: {meeting_id}")
 
             return self._current_meeting
 
         except Exception as e:
-            logger.error(f"Failed to join Teams meeting: {e}")
-            self._current_meeting.error_message = str(e)
+            logger.error("Failed to join Teams meeting; check the browser")
+            self._current_meeting.error_message = "Teams join failed"
             self._set_state(MeetingState.ERROR)
             raise
 
@@ -228,31 +228,44 @@ class TeamsProvider(MeetingProvider):
         except Exception:
             pass
 
-        # Toggle camera
-        if not camera_on:
-            try:
-                camera_btn = await self._page.query_selector(
-                    '[aria-label*="camera" i][role="button"], button[aria-label*="video" i]'
-                )
-                if camera_btn:
-                    aria_label = await camera_btn.get_attribute("aria-label")
-                    if aria_label and ("on" in aria_label.lower() or "turn off" in aria_label.lower()):
-                        await camera_btn.click()
-            except Exception:
-                pass
+        # Verify the actual controls before joining; unknown media state must
+        # not silently enable a microphone or camera against room defaults.
+        await self._set_media("camera", camera_on)
+        await self._set_media("microphone", mic_on)
 
-        # Toggle mic
-        if not mic_on:
-            try:
-                mic_btn = await self._page.query_selector(
-                    '[aria-label*="microphone" i][role="button"], button[aria-label*="mic" i]'
-                )
-                if mic_btn:
-                    aria_label = await mic_btn.get_attribute("aria-label")
-                    if aria_label and ("on" in aria_label.lower() or "unmute" in aria_label.lower()):
-                        await mic_btn.click()
-            except Exception:
-                pass
+    async def _media_control(self, kind):
+        selectors = {
+            "camera": '[data-tid="toggle-video"], [data-tid="prejoin-video-toggle"], button[aria-label*="camera" i], [role="switch"][aria-label*="camera" i]',
+            "microphone": '[data-tid="toggle-mute"], [data-tid="prejoin-audio-toggle"], button[aria-label*="mic" i], [role="switch"][aria-label*="mic" i]',
+        }
+        button = await self._page.query_selector(selectors[kind])
+        if not button:
+            raise RuntimeError(f"Teams {kind} control is unavailable")
+        checked = await button.get_attribute("aria-checked")
+        label = (await button.get_attribute("aria-label") or "").lower()
+        if checked in ("true", "false"):
+            return button, checked == "true"
+        if kind == "microphone":
+            if "unmute" in label:
+                return button, False
+            if "mute" in label:
+                return button, True
+        elif "turn off" in label:
+            return button, True
+        elif "turn on" in label:
+            return button, False
+        raise RuntimeError(f"Cannot verify Teams {kind} state")
+
+    async def _set_media(self, kind, enabled):
+        button, current = await self._media_control(kind)
+        if current != enabled:
+            await button.click()
+        for _ in range(10):
+            _, current = await self._media_control(kind)
+            if current == enabled:
+                return current
+            await asyncio.sleep(0.1)
+        raise RuntimeError(f"Teams {kind} state did not change")
 
     async def _click_join_button(self) -> None:
         """Click Teams join button."""
@@ -275,25 +288,17 @@ class TeamsProvider(MeetingProvider):
         raise RuntimeError("Could not find Teams join button")
 
     async def _wait_for_connection(self) -> None:
-        """Wait for Teams meeting connection."""
-        try:
-            # Wait for hangup button (indicates connected)
-            await self._page.wait_for_selector(
-                '[aria-label*="hang up" i], [aria-label*="leave" i], [data-tid="hangup-main-btn"]',
-                timeout=60000
-            )
-        except Exception:
-            # Check for lobby
-            lobby = await self._page.query_selector(':has-text("waiting")')
-            if lobby:
+        """Only connected call controls prove admission; a lobby can also have Leave."""
+        for _ in range(300):
+            toolbar = await self._page.query_selector('[data-tid="call-controls"]')
+            mute = await self._page.query_selector('[data-tid="toggle-mute"]')
+            if toolbar and mute:
+                return
+            lobby = await self._page.query_selector('[data-tid="lobby-screen"], [data-tid="lobby-message"]')
+            if lobby and self.state != MeetingState.IN_LOBBY:
                 self._set_state(MeetingState.IN_LOBBY)
-                logger.info("Waiting in Teams lobby...")
-                await self._page.wait_for_selector(
-                    '[aria-label*="hang up" i]',
-                    timeout=300000
-                )
-            else:
-                raise RuntimeError("Failed to connect to Teams meeting")
+            await asyncio.sleep(1)
+        raise RuntimeError("Teams admission could not be verified; check the browser")
 
     async def leave_meeting(self) -> None:
         """Leave Teams meeting."""
@@ -315,46 +320,25 @@ class TeamsProvider(MeetingProvider):
             await self._page.goto("about:blank")
 
         except Exception as e:
-            logger.error(f"Error leaving Teams: {e}")
+            self._set_state(MeetingState.ERROR)
+            raise RuntimeError("Could not leave Teams; check the browser") from None
 
         self._current_meeting = None
         self._set_state(MeetingState.IDLE)
         logger.info("Left Teams meeting")
 
     async def toggle_camera(self) -> bool:
-        """Toggle Teams camera."""
         if not self._page or self._state != MeetingState.CONNECTED:
-            return False
-
-        try:
-            # Keyboard shortcut: Ctrl+Shift+O
-            await self._page.keyboard.press("Control+Shift+o")
-            await asyncio.sleep(0.5)
-
-            if self._current_meeting:
-                self._current_meeting.is_camera_on = not self._current_meeting.is_camera_on
-
-            return self._current_meeting.is_camera_on if self._current_meeting else False
-
-        except Exception as e:
-            logger.error(f"Failed to toggle Teams camera: {e}")
-            return False
+            raise RuntimeError("Teams is not connected")
+        _, current = await self._media_control("camera")
+        actual = await self._set_media("camera", not current)
+        self._current_meeting.is_camera_on = actual
+        return actual
 
     async def toggle_mute(self) -> bool:
-        """Toggle Teams mute."""
         if not self._page or self._state != MeetingState.CONNECTED:
-            return True
-
-        try:
-            # Keyboard shortcut: Ctrl+Shift+M
-            await self._page.keyboard.press("Control+Shift+m")
-            await asyncio.sleep(0.5)
-
-            if self._current_meeting:
-                self._current_meeting.is_muted = not self._current_meeting.is_muted
-
-            return self._current_meeting.is_muted if self._current_meeting else True
-
-        except Exception as e:
-            logger.error(f"Failed to toggle Teams mute: {e}")
-            return True
+            raise RuntimeError("Teams is not connected")
+        _, current = await self._media_control("microphone")
+        actual = await self._set_media("microphone", not current)
+        self._current_meeting.is_muted = not actual
+        return not actual

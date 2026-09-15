@@ -207,6 +207,7 @@ meeting:
     - teams
     - zoom
   default_platform: auto
+  join_policy: manual
   join_early_minutes: 1
   auto_leave: true
   camera_default_on: true
@@ -217,6 +218,11 @@ calendar:
     - google
     - microsoft
   sync_interval_seconds: 60
+  microsoft_tenant_id: ""
+  microsoft_client_id: ""
+  microsoft_room_mailbox: ""
+  microsoft_auth_mode: ""
+  microsoft_credentials_path: ""
 
 ai:
   enabled: true

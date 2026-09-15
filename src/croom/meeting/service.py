@@ -36,6 +36,8 @@ class MeetingService(Service):
 
         self._providers: Dict[str, MeetingProvider] = {}
         self._active_provider: Optional[MeetingProvider] = None
+        self._join_lock = asyncio.Lock()
+        self._join_task = None
         self._state_callbacks: List[Callable[[MeetingState], None]] = []
 
     async def start(self) -> None:
@@ -44,13 +46,21 @@ class MeetingService(Service):
         for platform in self.config.meeting.platforms:
             provider_cls = get_provider(platform)
             if provider_cls:
+                provider = None
                 try:
                     provider = provider_cls()
                     await provider.initialize()
+                    provider.add_state_callback(self._on_state_change)
                     self._providers[platform] = provider
                     logger.info(f"Initialized meeting provider: {platform}")
-                except Exception as e:
-                    logger.error(f"Failed to initialize {platform} provider: {e}")
+                except asyncio.CancelledError:
+                    if provider:
+                        await provider.shutdown()
+                    raise
+                except Exception:
+                    logger.error(f"Failed to initialize {platform} provider")
+                    if provider:
+                        await provider.shutdown()
 
         if not self._providers:
             logger.warning("No meeting providers available")
@@ -60,8 +70,11 @@ class MeetingService(Service):
     async def stop(self) -> None:
         """Stop meeting service."""
         # Leave any active meeting
-        if self._active_provider and self._active_provider.state == MeetingState.CONNECTED:
-            await self.leave_meeting()
+        if self._active_provider:
+            try:
+                await self.leave_meeting()
+            except Exception:
+                logger.error("Meeting leave failed; closing provider resources")
 
         # Shutdown all providers
         for name, provider in self._providers.items():
@@ -110,6 +123,16 @@ class MeetingService(Service):
         Returns:
             MeetingInfo with connection details
         """
+        if self._join_lock.locked():
+            raise RuntimeError("A meeting join is already in progress")
+        async with self._join_lock:
+            self._join_task = asyncio.current_task()
+            try:
+                return await self._join_meeting(meeting_url, display_name, camera_on, mic_on)
+            finally:
+                self._join_task = None
+
+    async def _join_meeting(self, meeting_url, display_name, camera_on, mic_on):
         # Apply defaults from config
         if display_name is None:
             display_name = self.config.room.name or "Conference Room"
@@ -137,11 +160,8 @@ class MeetingService(Service):
             raise RuntimeError(f"Provider not available: {platform}")
 
         # Leave any existing meeting
-        if self._active_provider and self._active_provider.state == MeetingState.CONNECTED:
+        if self._active_provider:
             await self.leave_meeting()
-
-        # Setup state callback
-        provider.add_state_callback(self._on_state_change)
 
         # Join meeting
         self._active_provider = provider
@@ -155,7 +175,13 @@ class MeetingService(Service):
         return meeting_info
 
     async def leave_meeting(self) -> None:
-        """Leave the current meeting."""
+        """Leave the current meeting, cancelling an in-flight join first."""
+        if self._join_task and self._join_task != asyncio.current_task():
+            self._join_task.cancel()
+            try:
+                await self._join_task
+            except asyncio.CancelledError:
+                pass
         if self._active_provider:
             await self._active_provider.leave_meeting()
             self._active_provider = None
