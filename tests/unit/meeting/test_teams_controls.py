@@ -283,3 +283,136 @@ async def test_microphone_toggle_is_preferred_to_device_picker():
     control, enabled = await provider._media_control("microphone")
     assert control is toggle and enabled is True
     picker.get_attribute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fullscreen_guard_leaves_correct_window_untouched():
+    provider = TeamsProvider()
+    provider.set_window_bounds({"x": 800, "y": 0, "width": 3840, "height": 2160})
+    session = SimpleNamespace(
+        send=AsyncMock(
+            return_value={
+                "windowId": 9,
+                "bounds": {
+                    "left": 800,
+                    "top": 0,
+                    "width": 3840,
+                    "height": 2160,
+                    "windowState": "fullscreen",
+                },
+            }
+        ),
+        detach=AsyncMock(),
+    )
+    provider._context = SimpleNamespace(new_cdp_session=AsyncMock(return_value=session))
+    provider._page = object()
+    await provider._place_browser_window(only_if_needed=True)
+    session.send.assert_awaited_once_with("Browser.getWindowForTarget")
+    session.detach.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "actual",
+    [
+        {"left": 800, "top": 0, "width": 3840, "height": 2160, "windowState": "normal"},
+        {"left": 0, "top": 0, "width": 800, "height": 480, "windowState": "fullscreen"},
+    ],
+)
+async def test_fullscreen_guard_repairs_exited_fullscreen_or_wrong_output(actual):
+    provider = TeamsProvider()
+    provider.set_window_bounds({"x": 800, "y": 0, "width": 3840, "height": 2160})
+    session = SimpleNamespace(
+        send=AsyncMock(return_value={"windowId": 9, "bounds": actual}), detach=AsyncMock()
+    )
+    provider._context = SimpleNamespace(new_cdp_session=AsyncMock(return_value=session))
+    provider._page = object()
+    await provider._place_browser_window(only_if_needed=True)
+    assert session.send.await_args_list[-1].args[1]["bounds"] == {"windowState": "fullscreen"}
+    assert session.send.await_args_list[-2].args[1]["bounds"]["left"] == 800
+
+
+def admission_fixture(provider, monkeypatch, *, text_lobby=False, id_lobby=False, visible=False):
+    frame = {"time": 0, "text_lobby": text_lobby, "id_lobby": id_lobby, "connected": visible}
+    toolbar = SimpleNamespace(is_visible=AsyncMock(side_effect=lambda: frame["connected"]))
+    lobby = SimpleNamespace(is_visible=AsyncMock(side_effect=lambda: frame["id_lobby"]))
+    text = SimpleNamespace(
+        first=SimpleNamespace(is_visible=AsyncMock(side_effect=lambda: frame["text_lobby"]))
+    )
+
+    async def query(selector):
+        return lobby if "lobby-screen" in selector else toolbar
+
+    provider._state = MeetingState.JOINING
+    provider._current_meeting = SimpleNamespace(state=MeetingState.JOINING, progress="")
+    provider._page = SimpleNamespace(
+        is_closed=lambda: False,
+        query_selector=AsyncMock(side_effect=query),
+        get_by_text=lambda pattern: text,
+    )
+    monkeypatch.setattr(
+        "croom.meeting.providers.teams.asyncio.get_running_loop",
+        lambda: SimpleNamespace(time=lambda: frame["time"]),
+    )
+    return frame
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lobby_kind", ["text_lobby", "id_lobby"])
+async def test_verified_lobby_waits_beyond_connection_timeout_until_admitted(
+    monkeypatch, lobby_kind
+):
+    provider = TeamsProvider()
+    frame = admission_fixture(provider, monkeypatch, **{lobby_kind: True})
+
+    async def tick(seconds):
+        assert provider.state == MeetingState.IN_LOBBY
+        assert "organiser" in provider.current_meeting.progress
+        frame["time"] += seconds
+        if frame["time"] == 8:
+            frame["connected"] = True
+            frame[lobby_kind] = False
+
+    monkeypatch.setattr("croom.meeting.providers.teams.asyncio.sleep", tick)
+    await provider._wait_for_connection(timeout=3)
+    assert frame["time"] == 8
+
+
+@pytest.mark.asyncio
+async def test_hidden_lobby_and_hidden_call_controls_do_not_prove_admission(monkeypatch):
+    provider = TeamsProvider()
+    frame = admission_fixture(provider, monkeypatch)
+
+    async def tick(seconds):
+        frame["time"] += seconds
+
+    monkeypatch.setattr("croom.meeting.providers.teams.asyncio.sleep", tick)
+    with pytest.raises(RuntimeError, match="admission could not be verified"):
+        await provider._wait_for_connection(timeout=3)
+    assert provider.state == MeetingState.JOINING
+
+
+@pytest.mark.asyncio
+async def test_lobby_disappearing_returns_to_connecting_then_times_out(monkeypatch):
+    provider = TeamsProvider()
+    frame = admission_fixture(provider, monkeypatch, text_lobby=True)
+
+    async def tick(seconds):
+        frame["time"] += seconds
+        frame["text_lobby"] = False
+
+    monkeypatch.setattr("croom.meeting.providers.teams.asyncio.sleep", tick)
+    with pytest.raises(RuntimeError, match="admission could not be verified"):
+        await provider._wait_for_connection(timeout=3)
+    assert provider.state == MeetingState.JOINING
+    assert provider.current_meeting.progress == "Connecting to Teams…"
+
+
+@pytest.mark.asyncio
+async def test_browser_shutdown_cancels_fullscreen_guard():
+    provider = TeamsProvider()
+    provider._window_task = asyncio.create_task(asyncio.Event().wait())
+    task = provider._window_task
+    await provider.shutdown()
+    assert task.cancelled()
+    assert provider._window_task is None

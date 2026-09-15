@@ -60,6 +60,7 @@ class TeamsProvider(MeetingProvider):
         self._browser: Optional["Browser"] = None
         self._context: Optional["BrowserContext"] = None
         self._page: Optional["Page"] = None
+        self._window_task = None
 
     @property
     def name(self) -> str:
@@ -146,6 +147,7 @@ class TeamsProvider(MeetingProvider):
 
         self._page = await self._context.new_page()
         await self._place_browser_window()
+        self._window_task = asyncio.create_task(self._maintain_browser_window())
 
         logger.info("Teams browser opened")
 
@@ -156,7 +158,7 @@ class TeamsProvider(MeetingProvider):
             f"--window-size={bounds['width']},{bounds['height']}",
         ]
 
-    async def _place_browser_window(self):
+    async def _place_browser_window(self, only_if_needed=False):
         # A new Playwright context creates its own window after Chromium's launch
         # flags were processed. Place that actual window before going fullscreen.
         if not self._window_bounds:
@@ -166,6 +168,21 @@ class TeamsProvider(MeetingProvider):
             window = await session.send("Browser.getWindowForTarget")
             window_id = window["windowId"]
             bounds = self._window_bounds
+            actual = window.get("bounds", {})
+            if (
+                only_if_needed
+                and actual.get("windowState") == "fullscreen"
+                and all(
+                    actual.get(key) == bounds[target]
+                    for key, target in (
+                        ("left", "x"),
+                        ("top", "y"),
+                        ("width", "width"),
+                        ("height", "height"),
+                    )
+                )
+            ):
+                return
             await session.send(
                 "Browser.setWindowBounds",
                 {"windowId": window_id, "bounds": {"windowState": "normal"}},
@@ -189,8 +206,25 @@ class TeamsProvider(MeetingProvider):
         finally:
             await session.detach()
 
+    async def _maintain_browser_window(self):
+        """Recover fullscreen lost after mapping/navigation without reloading Teams."""
+        warned = False
+        while self._page and not self._page.is_closed():
+            await asyncio.sleep(5)
+            try:
+                await asyncio.wait_for(self._place_browser_window(only_if_needed=True), 10)
+                warned = False
+            except Exception as error:
+                if not warned:
+                    logger.warning("Could not restore Teams fullscreen (%s)", type(error).__name__)
+                    warned = True
+
     async def shutdown(self) -> None:
         """Shutdown browser."""
+        if self._window_task:
+            self._window_task.cancel()
+            await asyncio.gather(self._window_task, return_exceptions=True)
+            self._window_task = None
         if self._state == MeetingState.CONNECTED:
             await self.leave_meeting()
 
@@ -410,18 +444,43 @@ class TeamsProvider(MeetingProvider):
 
         raise RuntimeError("Could not find Teams join button")
 
-    async def _wait_for_connection(self) -> None:
+    async def _wait_for_connection(self, timeout=300) -> None:
         """Only connected call controls prove admission; a lobby can also have Leave."""
-        for _ in range(300):
-            toolbar = await self._page.query_selector('[data-tid="call-controls"]')
-            mute = await self._page.query_selector('[data-tid="toggle-mute"]')
-            if toolbar and mute:
-                return
-            lobby = await self._page.query_selector(
-                '[data-tid="lobby-screen"], [data-tid="lobby-message"]'
-            )
-            if lobby and self.state != MeetingState.IN_LOBBY:
-                self._set_state(MeetingState.IN_LOBBY)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            if self._page.is_closed():
+                raise RuntimeError("Meeting browser was closed")
+            try:
+                toolbar = await self._page.query_selector('[data-tid="call-controls"]')
+                mute = await self._page.query_selector('[data-tid="toggle-mute"]')
+                if toolbar and mute and await toolbar.is_visible() and await mute.is_visible():
+                    return
+                lobby = await self._page.query_selector(
+                    '[data-tid="lobby-screen"], [data-tid="lobby-message"]'
+                )
+                in_lobby = bool(lobby and await lobby.is_visible())
+                if not in_lobby:
+                    # Current Teams keeps the pre-join layout while waiting for
+                    # the organiser, without either of the older lobby data IDs.
+                    in_lobby = await self._page.get_by_text(
+                        re.compile(r"Someone will let you in when the meeting starts", re.I)
+                    ).first.is_visible()
+                if in_lobby:
+                    if self.state != MeetingState.IN_LOBBY:
+                        self._set_state(MeetingState.IN_LOBBY)
+                    self._current_meeting.progress = (
+                        "Waiting for the organiser to start or admit the room…"
+                    )
+                    # A confirmed lobby is healthy waiting, not a connection
+                    # timeout. Leave still cancels this task immediately.
+                    deadline = loop.time() + timeout
+                elif self.state == MeetingState.IN_LOBBY:
+                    self._set_state(MeetingState.JOINING)
+                    self._current_meeting.progress = "Connecting to Teams…"
+            except PlaywrightError:
+                # Admission can replace the page's execution context.
+                pass
             await asyncio.sleep(1)
         raise RuntimeError("Teams admission could not be verified; check the browser")
 
@@ -450,14 +509,7 @@ class TeamsProvider(MeetingProvider):
                 await hangup_btn.click()
                 await asyncio.sleep(1)
 
-            await self._page.close()
-            self._page = None
-            await self._context.close()
-            self._context = None
-            await self._browser.close()
-            self._browser = None
-            await self._playwright.stop()
-            self._playwright = None
+            await self.shutdown()
 
         except Exception as e:
             self._set_state(MeetingState.ERROR)
