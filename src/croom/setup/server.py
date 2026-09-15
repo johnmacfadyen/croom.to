@@ -8,6 +8,7 @@ import hmac
 import json
 from pathlib import Path
 import secrets
+import re
 import socket
 import ssl
 import time
@@ -64,6 +65,15 @@ def tls_context(state_dir):
     return context
 
 
+PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def generate_setup_password():
+    """Eight random, unambiguous characters, grouped for reading from a screen."""
+    code = "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(8))
+    return code[:4] + "-" + code[4:]
+
+
 class SetupServer:
     def __init__(self, runtime, state_dir, port=3000):
         self.runtime = runtime
@@ -74,10 +84,15 @@ class SetupServer:
         self.attempts = defaultdict(list)
         password_path = self.state_dir / "setup-password"
         if not password_path.exists():
-            atomic_write(password_path, secrets.token_urlsafe(18) + "\n")
+            atomic_write(password_path, generate_setup_password() + "\n")
         self.password = password_path.read_text().strip()
-        if len(self.password) < 16:
-            raise ValueError("Setup password must contain at least 16 characters")
+        self.short_password = bool(
+            re.fullmatch(f"[{PASSWORD_ALPHABET}]{{4}}-[{PASSWORD_ALPHABET}]{{4}}", self.password)
+        )
+        if not self.short_password and len(self.password) < 16:
+            raise ValueError(
+                "Setup password must be a generated room code or at least 16 characters"
+            )
         self._salt = secrets.token_bytes(16)
         self._password_hash = self._hash(self.password)
         self.app = web.Application(client_max_size=32768, middlewares=[self.boundary])
@@ -97,6 +112,8 @@ class SetupServer:
         )
 
     def _hash(self, password):
+        if self.short_password:
+            password = "".join(password.split()).replace("-", "").upper()
         return hashlib.scrypt(password.encode(), salt=self._salt, n=16384, r=8, p=1)
 
     def _session(self, request):

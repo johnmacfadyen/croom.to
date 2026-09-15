@@ -102,3 +102,34 @@ async def test_no_filesystem_fallback_and_no_fake_action(client):
     assert "fixture-private-secret" not in await response.text()
     page = await test.get("/")
     assert "frame-ancestors 'none'" in page.headers["Content-Security-Policy"]
+
+
+@pytest.mark.asyncio
+async def test_short_password_accepts_typing_variants_and_rejects_wrong_code(client):
+    test, setup, _ = client
+    assert len(setup.password) == 9 and setup.password[4] == "-"
+    assert not set(setup.password) & set("01ILO")
+    origin = str(test.make_url("/")).rstrip("/")
+    for value in (
+        setup.password.lower(),
+        setup.password.replace("-", ""),
+        setup.password.replace("-", " "),
+    ):
+        response = await test.post(
+            "/api/login", json={"password": value}, headers={"Origin": origin}
+        )
+        assert response.status == 200
+    changed = ("A" if setup.password[0] != "A" else "B") + setup.password[1:]
+    response = await test.post("/api/login", json={"password": changed}, headers={"Origin": origin})
+    assert response.status == 401
+
+
+def test_existing_long_password_remains_case_sensitive_and_is_not_rotated(tmp_path):
+    path = tmp_path / "setup-password"
+    legacy = "Long-Existing-Secret-Password"
+    path.write_text(legacy + "\n")
+    setup = SetupServer(SimpleNamespace(), tmp_path)
+    assert not setup.short_password
+    assert path.read_text() == legacy + "\n"
+    assert setup._hash(legacy) == setup._password_hash
+    assert setup._hash(legacy.lower()) != setup._password_hash

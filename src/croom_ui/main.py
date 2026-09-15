@@ -223,9 +223,7 @@ class RoomWindow(QWidget):
             text = (
                 "On your laptop, open:\n\n"
                 f"https://{socket.gethostname()}.local:{server.port}\n\n"
-                f"Setup password: {server.password}\n\n"
-                "This Pi uses a local HTTPS certificate. Your browser will ask you to accept it.\n"
-                "Choose the touchscreen and TV displays in Room setup. Meetings open on the TV."
+                "Setup password:"
             )
         else:
             text = "The setup server is not available. Check the room application log."
@@ -233,6 +231,20 @@ class RoomWindow(QWidget):
         label.setTextFormat(Qt.PlainText)
         label.setWordWrap(True)
         layout.addWidget(label)
+        if server:
+            password = QLabel(server.password)
+            password.setTextFormat(Qt.PlainText)
+            password.setAlignment(Qt.AlignCenter)
+            password.setStyleSheet(
+                "font-family:monospace;font-size:30px;font-weight:bold;padding:10px;"
+            )
+            layout.addWidget(password)
+            hint = QLabel(
+                ("Capitals, spaces and the dash don't matter.\n\n" if server.short_password else "")
+                + "Your browser will ask you to accept this Pi's local HTTPS certificate."
+            )
+            hint.setWordWrap(True)
+            layout.addWidget(hint)
         close = QPushButton("Back to room")
         close.setMinimumHeight(48)
         close.clicked.connect(dialog.accept)

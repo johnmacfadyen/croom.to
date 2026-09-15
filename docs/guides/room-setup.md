@@ -10,7 +10,10 @@ separate TV shows the room welcome screen and Teams browser.
 2. Open `https://<pi-hostname>.local:3000` on a laptop on the same network. The Pi
    creates its own HTTPS certificate, so your browser will show a certificate warning.
    Confirm that you are opening your own Pi before accepting it.
-3. Sign in. Set the room name and timezone.
+3. Sign in. New setup passwords contain eight characters in two groups of four,
+   without confusing `0/O` or `1/I/L` characters. Capitals, spaces and the dash
+   are optional when typing these codes. Existing long passwords continue to work
+   unchanged until explicitly replaced. Set the room name and timezone.
 4. Select the touchscreen (usually **DSI-1**) and the connected TV's HDMI output.
    **Identify connected displays** briefly labels each screen. You can save other
    settings before connecting the TV. Joins stay disabled if either selected screen
