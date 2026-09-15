@@ -1,5 +1,39 @@
 # Startup fix and development handoff
 
+## Native Teams media controls — 2026-09-15
+
+A live pre-join inspection identified why name entry succeeded but Join was never
+clicked: Teams exposes `input[type=checkbox][role=switch]` controls with data IDs
+`toggle-video` and `toggle-mute`. They have a native checked property and a title,
+but no `aria-checked` or `aria-label`. The old microphone selector could also find
+`selected-microphone-display` (the device picker) before the real mute control.
+
+Application revision **2e814d723ad816bc1eb948352421c68850ba292b** prioritizes exact
+toggle IDs and reads native checkbox state before falling back to accessible
+state/labels. The saved room defaults at this check were camera on and microphone
+on. Unknown controls still stop the join; no unchecked media fallback was added.
+Focused checks: **151 passed**, including native on/off states and excluding the
+microphone device picker. The owner's 3840×2160 TV preference is preserved.
+
+Installed package verification matched all **102** files. A Pi test using the
+actual captured checkbox attributes and preceding device picker verified name
+entry, both switches off and then on, the local Join-button click, and fullscreen
+3840×2160 placement. A separate real Teams post-fix recheck remained blank until
+the pre-join deadline, so real call admission remains unverified. No real Join was
+clicked by these diagnostic runs. The existing test booking ended at 17:30;
+the owner needs a current booking for another normal touchscreen attempt.
+
+Current wheel: `/opt/croom/releases/2e814d7/croom-2.0.0.dev0-py3-none-any.whl`,
+SHA-256 `bb9aed31363300f76144547828b1474d02cd8b281ddcda9eccc25d6579901e6d`.
+Provenance: `teams_native_switch_update` in `/opt/croom/DEPLOYMENT.json`.
+Backup: `/opt/croom/backups/pre-media-switch-2e814d7`. The original automatic
+rollback attempt after the live probe timeout could not read this root-only
+backup as the croom user; the new package remained installed and was reverified.
+A root `rollback.sh` now copies only the wheel into an accessible temporary folder
+before installation, preserving backup-directory protection. Croom returned active
+with zero automatic restarts.
+
+
 ## Native 4K TV output restored — 2026-09-15
 
 The owner found 1080p visibly poor on the 4K TV. HDMI-A-1 is now **3840×2160 at
