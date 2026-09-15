@@ -852,6 +852,15 @@ except ImportError:
     V4L2_AVAILABLE = False
 
 
+def _is_pi_processing_device(device: Path) -> bool:
+    """Pi codec/ISP nodes expose video capture without being camera sources."""
+    try:
+        name = (Path("/sys/class/video4linux") / device.name / "name").read_text().strip()
+    except OSError:
+        return False
+    return name.startswith(("bcm2835-codec", "bcm2835-isp", "rpi-hevc-dec"))
+
+
 def get_cameras() -> List[CameraInfo]:
     """
     Get list of available cameras.
@@ -896,7 +905,7 @@ def get_cameras() -> List[CameraInfo]:
             for device in Path("/dev").glob("video*"):
                 device_num = str(device).replace("/dev/video", "")
 
-                if not device_num.isdigit():
+                if not device_num.isdigit() or _is_pi_processing_device(device):
                     continue
 
                 # Try to open with OpenCV
