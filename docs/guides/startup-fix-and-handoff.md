@@ -1,5 +1,29 @@
 # Startup fix and development handoff
 
+## Explain unavailable joins — 2026-09-15
+
+The first attempted join was rejected by the configured one-minute early-join
+window: the accepted booking and Teams link were valid, but its start was still
+about 16 minutes away. Calendar sync was healthy and the meeting provider remained
+idle; no browser join had begun. The generic UI exception message hid the reason.
+
+Application revision **399f23290ba3d3c84c4d3eaa617b1d4997722d28** now shares eligibility
+checks between the agent and touchscreen. Selecting a future booking shows its
+local join-available time and disables Join until eligible. Cancelled, declined,
+ended or linkless bookings and calendar-refresh failures have specific safe error
+messages. Unexpected backend exception details remain hidden. The configured
+one-minute window and manual-join policy are unchanged.
+
+Focused core/UI/calendar/meeting/setup checks: **125 passed**. The 800×480 layout
+was visually checked; all **100** package files matched the deployed wheel. The
+Pi user service restarted with zero automatic restarts. Backup:
+`/opt/croom/backups/pre-join-errors-399f232`. Provenance is recorded under
+`join_eligibility_update` in `/opt/croom/DEPLOYMENT.json`.
+
+No call was retried during diagnosis or deployment. Teams/media verification
+remains outstanding. The latest firmware reading was `0x50000` (historical
+undervoltage/throttling flags, no active flags at that check).
+
 ## Live calendar and TV display — 2026-09-15
 
 Microsoft room-calendar access is now configured on the Pi; a live refresh returned
