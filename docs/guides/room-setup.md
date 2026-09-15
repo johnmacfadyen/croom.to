@@ -87,7 +87,7 @@ From an SSH session as John:
 
 ```sh
 systemctl --user status croom-room.service
-journalctl --user -u croom-room.service -n 80 --no-pager
+sudo journalctl _SYSTEMD_USER_UNIT=croom-room.service -n 80 --no-pager
 ```
 
 Desktop autostart requires desktop login (or an existing auto-login configuration).

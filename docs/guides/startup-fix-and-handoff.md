@@ -15,10 +15,37 @@ uses the selected TV, and owns media capture. Separate raw camera/audio services
 are skipped in desktop room mode. Missing or mirrored displays block joining.
 
 Read [room setup](room-setup.md) for configuration and the owner-specific Pi
-startup paths. Deployment verification will be recorded here after installation.
+startup paths. Application revision **55fff00e14b3d5ef919fb88373769df9de876a8e** is
+published on the fork branch and installed on `mirror`. All **99** packaged files
+matched the deployed wheel, SHA-256
+`4ab5d42bf7312e7b7d5f47029f47a93309a4399dc79979ad4b07f8bbbbc10256`.
+
+The active user service is `croom-room.service`, running as John in the real
+Wayland session. Both old system services are disabled. XDG desktop autostart
+starts the user service with the session environment. Live checks verified:
+
+- `pip check`, native process startup with zero automatic restarts, and HTTPS
+  status 200 from the laptop using the Pi certificate as an explicit trust anchor.
+- Unauthenticated API requests are rejected; authenticated settings read/save
+  works; room services restart successfully after save without restarting the UI.
+- Teams prerequisites are ready, DSI-1 is detected at 800×480, HDMI-A-1 and HDMI-A-2
+  are disconnected, and joining is blocked until a TV is selected and connected.
+- Microsoft credentials remain absent; the calendar test explicitly requests
+  saved settings instead of reporting a synthetic connection.
+
+Rollback: `/opt/croom/backups/pre-room-app-55fff00/rollback.sh` restores the previous
+fork package and headless service. Desktop/config snapshot:
+`/opt/croom/backups/pre-room-desktop-20260915-131548`. Provenance is in
+`/opt/croom/DEPLOYMENT.json` under `desktop_room_update`; the older top-level
+migration fields describe the first fork installation.
+
+The Pi still reports **active undervoltage/throttling (`0x50005`)**. The Logitech
+webcam was not enumerating in the earlier USB check. The TV is not yet attached.
+No reboot, media capture, live Microsoft sign-in or real Teams call was performed.
+Use the new power supply before attended TV/media/reboot validation.
 Earlier port-3000 findings below describe the previous installation.
 
-Validation: focused setup, runtime recovery, display gating, core startup, Microsoft
+Validation: **119 passing** focused setup, runtime recovery, display gating, core startup, Microsoft
 calendar, meeting and Qt tests; browser fixture sign-in, save/reload, display choices
 and calendar form; visually checked the native controller at 800×480. These checks
 do not prove physical dual-display placement, live Microsoft access or a Teams call.
