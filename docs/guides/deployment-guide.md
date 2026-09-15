@@ -172,8 +172,9 @@ integration. The current standalone agent explicitly rejects a configured dashbo
 URL because that enrollment/client integration is not implemented for its current API.
 Starting a frontend alone would not provide working room management.
 
-For the implemented single-room workflow, use the native `croom-ui` and the
-[Microsoft 365 room-calendar setup guide](microsoft-365-room-calendar.md).
+For the implemented single-room workflow, `croom-ui` starts a native touchscreen
+controller plus an authenticated HTTPS setup page on port 3000. See the
+[single-room setup guide](room-setup.md). This page is independent of the fleet frontend.
 The legacy Python web interface on default port 8080 is also not started by the
 agent; its authentication and service-method mismatches remain unresolved.
 

@@ -248,3 +248,13 @@ def test_ai_dependency_order_and_privacy_registration(enabled, privacy, expect_a
         order = agent.service_manager._start_order
         assert order.index("ai") < order.index("audio")
         assert order.index("ai") < order.index("video")
+
+
+def test_desktop_browser_media_does_not_open_raw_capture_services():
+    agent = make_agent()
+    agent.config.meeting.browser_media = True
+    agent.config.ai.enabled = False
+    agent._initialize_services()
+    assert agent.service_manager.get_service('audio') is None
+    assert agent.service_manager.get_service('video') is None
+    assert agent.service_manager.get_service('meeting') is not None

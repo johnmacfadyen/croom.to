@@ -72,3 +72,32 @@ async def test_leave_cancels_join_and_duplicate_join_is_rejected():
 @pytest.mark.parametrize("url", ["https://teams.microsoft.com.evil.example/", "https://evil.example/?teams.microsoft.com"])
 def test_teams_rejects_lookalike_hosts(url):
     assert not TeamsProvider.can_handle_url(url)
+
+
+@pytest.mark.asyncio
+async def test_failed_browser_launch_can_be_left_and_retried():
+    provider = TeamsProvider()
+    provider._state = MeetingState.ERROR
+    provider._current_meeting = SimpleNamespace(error_message='launch failed')
+    provider._playwright = SimpleNamespace(stop=AsyncMock())
+    handle = provider._playwright
+    await provider.leave_meeting()
+    handle.stop.assert_awaited_once()
+    assert provider.state == MeetingState.IDLE
+    assert provider.current_meeting is None
+
+
+@pytest.mark.asyncio
+async def test_system_browser_initialization_is_lazy(tmp_path, monkeypatch):
+    import croom.meeting.providers.teams as module
+    path = tmp_path/'chromium'
+    path.write_text('#!/bin/sh\n')
+    path.chmod(0o700)
+    monkeypatch.setattr(module, 'PLAYWRIGHT_AVAILABLE', True)
+    provider = TeamsProvider()
+    provider.configure_browser(str(path))
+    provider._open_browser = AsyncMock()
+    await provider.initialize()
+    provider._open_browser.assert_not_awaited()
+    provider.set_window_bounds({'x':800, 'y':0, 'width':1920, 'height':1080})
+    assert '--window-position=800,0' in provider._placement_args()

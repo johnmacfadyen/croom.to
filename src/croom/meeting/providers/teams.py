@@ -41,6 +41,8 @@ class TeamsProvider(MeetingProvider):
 
     def __init__(self):
         super().__init__()
+        self._executable_path = None
+        self._window_bounds = None
         self._playwright = None
         self._browser: Optional["Browser"] = None
         self._context: Optional["BrowserContext"] = None
@@ -78,24 +80,44 @@ class TeamsProvider(MeetingProvider):
         import hashlib
         return hashlib.md5(url.encode()).hexdigest()[:12]
 
+    def configure_browser(self, executable_path=""):
+        self._executable_path = executable_path or None
+
+    def set_window_bounds(self, bounds):
+        self._window_bounds = bounds
+
     async def initialize(self) -> None:
-        """Initialize browser for Teams."""
+        """Check prerequisites; open a visible browser only after the user joins."""
         if not PLAYWRIGHT_AVAILABLE:
             raise RuntimeError("Playwright not installed")
+        if self._executable_path:
+            import os
+            if not os.path.isfile(self._executable_path) or not os.access(self._executable_path, os.X_OK):
+                raise RuntimeError("Configured browser executable is unavailable")
+        else:
+            from pathlib import Path
+            async with async_playwright() as playwright:
+                if not Path(playwright.chromium.executable_path).exists():
+                    raise RuntimeError("Install the Playwright Chromium browser")
 
-        logger.info("Initializing Teams provider...")
-
+    async def _open_browser(self):
+        if self._page and not self._page.is_closed():
+            return
+        # Recover a closed window or a previous partial launch before retrying.
+        await self.shutdown()
         self._playwright = await async_playwright().start()
 
         # Teams web works best with Edge/Chrome
         self._browser = await self._playwright.chromium.launch(
             headless=False,
+            executable_path=self._executable_path,
             args=[
                 "--use-fake-ui-for-media-stream",
                 "--disable-infobars",
                 "--disable-dev-shm-usage",
-                "--window-size=1920,1080",
-            ]
+                "--class=croom-meeting",
+                "--ozone-platform=x11",
+            ] + self._placement_args()
         )
 
         self._context = await self._browser.new_context(
@@ -105,7 +127,13 @@ class TeamsProvider(MeetingProvider):
 
         self._page = await self._context.new_page()
 
-        logger.info("Teams provider initialized")
+        logger.info("Teams browser opened")
+
+    def _placement_args(self):
+        bounds = self._window_bounds or {"x": 0, "y": 0, "width": 1280, "height": 720}
+        return [f"--window-position={bounds['x']},{bounds['y']}",
+                f"--window-size={bounds['width']},{bounds['height']}",
+                "--start-fullscreen"]
 
     async def shutdown(self) -> None:
         """Shutdown browser."""
@@ -138,9 +166,6 @@ class TeamsProvider(MeetingProvider):
         mic_on: bool = True
     ) -> MeetingInfo:
         """Join a Teams meeting."""
-        if not self._page:
-            raise RuntimeError("Provider not initialized")
-
         if not self.can_handle_url(meeting_url):
             raise ValueError("Unsupported Teams meeting URL")
         meeting_id = self.extract_meeting_id(meeting_url)
@@ -157,6 +182,7 @@ class TeamsProvider(MeetingProvider):
         logger.info(f"Joining Teams meeting: {meeting_id}")
 
         try:
+            await self._open_browser()
             # Navigate to meeting
             await self._page.goto(meeting_url, wait_until="networkidle")
             await asyncio.sleep(2)
@@ -302,7 +328,15 @@ class TeamsProvider(MeetingProvider):
 
     async def leave_meeting(self) -> None:
         """Leave Teams meeting."""
-        if not self._page or self._state == MeetingState.IDLE:
+        if self._state == MeetingState.IDLE:
+            return
+        if not self._page:
+            # Launch can fail before a page exists; Leave must still reset the
+            # pending meeting so setup and a subsequent join remain available.
+            self._set_state(MeetingState.LEAVING)
+            await self.shutdown()
+            self._current_meeting = None
+            self._set_state(MeetingState.IDLE)
             return
 
         self._set_state(MeetingState.LEAVING)
@@ -317,7 +351,14 @@ class TeamsProvider(MeetingProvider):
                 await hangup_btn.click()
                 await asyncio.sleep(1)
 
-            await self._page.goto("about:blank")
+            await self._page.close()
+            self._page = None
+            await self._context.close()
+            self._context = None
+            await self._browser.close()
+            self._browser = None
+            await self._playwright.stop()
+            self._playwright = None
 
         except Exception as e:
             self._set_state(MeetingState.ERROR)

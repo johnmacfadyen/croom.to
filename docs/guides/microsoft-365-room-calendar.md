@@ -1,6 +1,6 @@
 # Microsoft 365 room calendar
 
-## Implemented locally
+## Implemented room workflow
 
 The agent reads one room mailbox using **client_credentials** authentication.
 MSAL runs outside the event loop and refreshes expiring tokens. Graph requests use
@@ -26,6 +26,10 @@ support is made.
 
 ## Configuration
 
+For everyday configuration, use the [room setup page](room-setup.md). It saves
+protected credentials and provides a calendar connection test. The following YAML
+and installation details are for manual provisioning.
+
 Install into the intended Python 3.11 environment:
 
 ```bash
@@ -35,8 +39,8 @@ python3.11 -m venv .venv
 ```
 
 On the Pi, browser system dependencies and the desktop session must be available.
-Run as the actual desktop user with that session's environment. This change does not
-modify systemd units or hardcode `DISPLAY`, `XDG_RUNTIME_DIR` or a Qt backend.
+Run as the actual desktop user with that session's environment. The installed
+`mirror` Pi now uses a desktop autostart/user-service setup described in the room guide.
 
 Example configuration (replace identifiers and the absolute credential path):
 
@@ -84,7 +88,8 @@ Launch one room process from its desktop session:
 The UI owns the agent and its hardware/browser resources. Do not run it alongside a
 separate headless agent for the same room. Coordinate stopping any installed service
 before this attended launch. Closing the UI cancels pending joins and stops services.
-The UI does not expose the existing unauthenticated web interface.
+The UI starts its own authenticated HTTPS setup server. The legacy unauthenticated
+web interface remains inactive.
 
 ## Microsoft authorization boundary
 

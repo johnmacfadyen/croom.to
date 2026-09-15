@@ -49,6 +49,8 @@ class MeetingService(Service):
                 provider = None
                 try:
                     provider = provider_cls()
+                    if platform == "teams":
+                        provider.configure_browser(self.config.meeting.browser_executable)
                     await provider.initialize()
                     provider.add_state_callback(self._on_state_change)
                     self._providers[platform] = provider

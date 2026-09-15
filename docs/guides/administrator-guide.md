@@ -215,8 +215,9 @@ Docker/Django commands did not match the code and have been removed.
 See [current dashboard deployment status](deployment-guide.md#3-dashboard-deployment).
 Dashboard operations elsewhere in this guide describe intended fleet capabilities;
 they are not available in the current standalone agent installation.
-For the implemented native room UI, follow
-[Microsoft 365 room-calendar setup](microsoft-365-room-calendar.md).
+For the implemented single-room controller and authenticated HTTPS setup on port
+3000, follow [room setup](room-setup.md). This runs with `croom-ui`, independently
+of the fleet dashboard.
 
 ## 4. Device Management
 

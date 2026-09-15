@@ -37,6 +37,8 @@ class MeetingConfig:
     auto_leave: bool = True
     camera_default_on: bool = True
     mic_default_on: bool = True
+    browser_media: bool = False  # Browser owns camera/mic in desktop room mode
+    browser_executable: str = ""  # Empty uses the Playwright-managed browser
 
 
 @dataclass
@@ -121,6 +123,8 @@ class DisplayConfig:
     power_on_boot: bool = True
     power_off_shutdown: bool = True
     touch_enabled: bool = True
+    controller_output: str = ""
+    meeting_output: str = ""
 
 
 @dataclass
@@ -229,6 +233,8 @@ class Config:
                 "join_policy": self.meeting.join_policy,
                 "camera_default_on": self.meeting.camera_default_on,
                 "mic_default_on": self.meeting.mic_default_on,
+                "browser_executable": self.meeting.browser_executable,
+                "browser_media": self.meeting.browser_media,
             },
             "calendar": {
                 "providers": self.calendar.providers,
@@ -270,6 +276,8 @@ class Config:
                 "power_on_boot": self.display.power_on_boot,
                 "power_off_shutdown": self.display.power_off_shutdown,
                 "touch_enabled": self.display.touch_enabled,
+                "controller_output": self.display.controller_output,
+                "meeting_output": self.display.meeting_output,
             },
             "dashboard": {
                 "enabled": self.dashboard.enabled,

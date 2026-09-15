@@ -84,23 +84,24 @@ class CroomAgent:
             except ImportError as e:
                 logger.warning(f"AI service not available: {e}")
 
-        # Audio Service
-        try:
-            from croom.audio.service import AudioService
-            audio_service = ComponentService("audio", AudioService(audio_config(self.config)))
-            self.service_manager.register(audio_service, dependencies=["ai"] if self.service_manager.get_service("ai") else None)
-            logger.info("Audio service registered")
-        except ImportError as e:
-            logger.warning(f"Audio service not available: {e}")
+        if not self.config.meeting.browser_media:
+            # Audio Service
+            try:
+                from croom.audio.service import AudioService
+                audio_service = ComponentService("audio", AudioService(audio_config(self.config)))
+                self.service_manager.register(audio_service, dependencies=["ai"] if self.service_manager.get_service("ai") else None)
+                logger.info("Audio service registered")
+            except ImportError as e:
+                logger.warning(f"Audio service not available: {e}")
 
-        # Video Service
-        try:
-            from croom.video.service import VideoService
-            video_service = ComponentService("video", VideoService(video_config(self.config)))
-            self.service_manager.register(video_service, dependencies=["ai"] if self.service_manager.get_service("ai") else None)
-            logger.info("Video service registered")
-        except ImportError as e:
-            logger.warning(f"Video service not available: {e}")
+            # Video Service
+            try:
+                from croom.video.service import VideoService
+                video_service = ComponentService("video", VideoService(video_config(self.config)))
+                self.service_manager.register(video_service, dependencies=["ai"] if self.service_manager.get_service("ai") else None)
+                logger.info("Video service registered")
+            except ImportError as e:
+                logger.warning(f"Video service not available: {e}")
 
         # Display Service
         try:
@@ -115,7 +116,7 @@ class CroomAgent:
         try:
             from croom.meeting.service import MeetingService
             meeting_service = MeetingService(self.config)
-            self.service_manager.register(meeting_service, dependencies=["audio", "video"])
+            self.service_manager.register(meeting_service, dependencies=[name for name in ("audio", "video") if self.service_manager.get_service(name)])
             logger.info("Meeting service registered")
         except ImportError as e:
             logger.warning(f"Meeting service not available: {e}")

@@ -1,5 +1,28 @@
 # Startup fix and development handoff
 
+## Touchscreen and TV setup — 2026-09-15
+
+The room application now includes a password-protected HTTPS setup page on port
+3000, explicit touchscreen/TV roles and a TV welcome screen. Configuration is
+allowlisted, written atomically, and Microsoft secrets are stored in protected
+files outside YAML. API sessions require authentication; writes require same-origin
+requests and CSRF tokens. This is a separate server from the inactive legacy web UI.
+
+`croom-ui` owns the agent, setup server and displays in one desktop process. Setup
+stays available after service startup failures. Saving restarts room services and
+is rejected during a meeting or join. The meeting browser opens only after Join,
+uses the selected TV, and owns media capture. Separate raw camera/audio services
+are skipped in desktop room mode. Missing or mirrored displays block joining.
+
+Read [room setup](room-setup.md) for configuration and the owner-specific Pi
+startup paths. Deployment verification will be recorded here after installation.
+Earlier port-3000 findings below describe the previous installation.
+
+Validation: focused setup, runtime recovery, display gating, core startup, Microsoft
+calendar, meeting and Qt tests; browser fixture sign-in, save/reload, display choices
+and calendar form; visually checked the native controller at 800×480. These checks
+do not prove physical dual-display placement, live Microsoft access or a Teams call.
+
 ## Latest installation migration — 2026-09-15
 
 The Bookworm Pi installation now uses the owner's fork,

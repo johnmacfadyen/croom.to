@@ -49,6 +49,7 @@ microsoft = ["msal>=1.23,<2"]
 ui = [
     "PySide6>=6.6.0",
     "qasync>=0.27,<1",
+    "cryptography>=41,<51",
 ]
 coral = [
     "tflite-runtime>=2.14.0",
@@ -76,7 +77,7 @@ where = ["src"]
 include = ["croom", "croom.*", "croom_ui", "croom_ui.*"]
 
 [tool.setuptools.package-data]
-croom = ["py.typed"]
+croom = ["py.typed", "setup/static/*.html", "setup/static/*.js", "setup/static/*.css"]
 
 [tool.black]
 line-length = 100
