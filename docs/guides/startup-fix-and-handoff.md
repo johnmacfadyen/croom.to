@@ -1,6 +1,42 @@
 # Startup fix and development handoff
 
-## Current state
+## Latest installation migration — 2026-09-15
+
+The Bookworm Pi installation now uses the owner's fork,
+`https://github.com/johnmacfadyen/croom.to.git`, pinned to application revision
+`4c61b77563631a8d107b88873e725952cf8540f7` from `codex/microsoft-room-calendar`.
+The fork's `main` branch was not changed. The startup/calendar/UI changes were
+published as `8c91165`; the deployment also includes `4c61b77`, which prevents
+Raspberry Pi codec/ISP processing nodes from being mistaken for physical cameras.
+Video/startup regression checks for that fix: **69 passed** locally.
+
+Migration verification on the Pi:
+
+- The installed package's Git provenance points to the fork and exact revision;
+  all 14 changed application Python files matched their Git source SHA-256 hashes.
+- `pip check`, both agent/UI help entry points, and a headless Qt runtime check passed.
+- A direct service lifecycle check started and stopped the real services, kept the
+  event loop responsive, and found no cameras. The enabled `croom.service` was then
+  started successfully, with no restarts or the earlier repeated capture timeouts.
+- Existing configuration and both service unit files were preserved byte-for-byte.
+  `croom-ui.service` remains disabled. Microsoft (`msal`) and UI (`PySide6`, `qasync`)
+  dependencies are installed; PySide6 resolved to Bookworm-compatible 6.8.0.2.
+
+This is an installation migration, not a verified conferencing room. Calendar
+credentials remain absent; no meeting provider initializes in the existing service
+setup. Browser runtime/desktop-session integration, audio backend and actual
+camera/microphone setup remain. Optional AI models are also absent. No calendar
+invitation, real Teams join, or reboot test was performed.
+
+Rollback snapshot (old environment, config, and service units):
+`/opt/croom/backups/pre-fork-20260915`. Its root-owned `rollback.sh` restores the old
+installation and leaves services stopped, matching the state before migration.
+Deployment provenance is recorded in `/opt/croom/DEPLOYMENT.json`.
+
+The sections below record the earlier development milestones; statements about
+no remote deployment in those historical sections precede this migration.
+
+## Original startup repair state
 
 Target: `mirror`, a Raspberry Pi 4 on Bookworm with Python 3.11. The intended workflow
 is a Microsoft 365 room calendar with real meeting controls. The owner reported
