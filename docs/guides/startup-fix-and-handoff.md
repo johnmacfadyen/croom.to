@@ -1,5 +1,20 @@
 # Startup fix and development handoff
 
+## Readable setup passwords — 2026-09-15
+
+Application revision **ab7cafac58cc4e91b8dd7f65749340e3202a0399** is published and
+installed on the Pi. New setup passwords have eight unambiguous characters grouped
+4-4, displayed in large text. Entry ignores capitals, spaces and dashes for these
+codes. Existing long passwords retain their exact behavior until explicitly changed.
+The owner's current Pi password was replaced with a short code as requested.
+
+Setup/UI checks: **25 passed**; the 650×315 password dialog was visually checked
+inside the 800×480 controller. Live Pi login using lowercase with no dash passed,
+and room services restarted successfully. All 99 package files matched the wheel.
+The prior wheel/password/provenance are protected in
+`/opt/croom/backups/pre-short-password-ab7cafa`; the latest installed revision is
+recorded under `setup_password_update` in `/opt/croom/DEPLOYMENT.json`.
+
 ## Touchscreen and TV setup — 2026-09-15
 
 The room application now includes a password-protected HTTPS setup page on port
