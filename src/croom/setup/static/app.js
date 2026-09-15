@@ -22,6 +22,7 @@ function fill(settings) {
   form.elements.client_secret.value='';
   $('secret-help').textContent=settings.has_secret ? 'A secret is saved. Leave blank to keep it.' : 'Enter the secret value, not its ID.';
   toggleCalendar();
+  previewLogo();
 }
 function screens(status, settings) {
   for (const key of ['controller_output','meeting_output']) {
@@ -51,8 +52,29 @@ async function openSetup() {
 function toggleCalendar(){ $('calendar-fields').hidden=!form.elements.calendar_enabled.checked; }
 form.elements.calendar_enabled.addEventListener('change',toggleCalendar);
 $('login-form').addEventListener('submit',async event=>{event.preventDefault();const button=event.submitter;button.disabled=true;try{const result=await api('login',{password:$('password').value});csrf=result.csrf;$('password').value='';$('notice').hidden=true;await openSetup();}catch(e){notice(e.message);}finally{button.disabled=false;}});
-form.addEventListener('submit',async event=>{event.preventDefault();$('save').disabled=true;try{const data={};for(const key of ['room_name','timezone','controller_output','meeting_output','tenant_id','client_id','room_mailbox','client_secret'])data[key]=form.elements.namedItem(key).value;for(const key of ['calendar_enabled','camera_default_on','mic_default_on'])data[key]=form.elements.namedItem(key).checked;const result=await api('settings',data);fill(result.settings);notice(result.message);}catch(e){notice(e.message);}finally{$('save').disabled=false;}});
+form.addEventListener('submit',async event=>{event.preventDefault();$('save').disabled=true;try{const data={};for(const key of ['room_name','timezone','controller_output','meeting_output','tenant_id','client_id','room_mailbox','client_secret','brand_name','accent_color','welcome_message','logo_data'])data[key]=form.elements.namedItem(key).value;for(const key of ['calendar_enabled','camera_default_on','mic_default_on','hide_meeting_titles'])data[key]=form.elements.namedItem(key).checked;const result=await api('settings',data);fill(result.settings);notice(result.message);}catch(e){notice(e.message);}finally{$('save').disabled=false;}});
 $('identify').addEventListener('click',()=>api('displays/identify',{}).then(()=>notice('Display labels are shown for four seconds.')).catch(e=>notice(e.message)));
 $('test-calendar').addEventListener('click',async()=>{$('test-calendar').disabled=true;$('calendar-result').textContent='Testing…';try{const result=await api('calendar/test',{});$('calendar-result').textContent=result.message;}catch(e){$('calendar-result').textContent=e.message;}finally{$('test-calendar').disabled=false;}});
 $('logout').addEventListener('click',()=>api('logout',{}).then(showLogin).catch(e=>notice(e.message)));
 openSetup().catch(()=>showLogin());
+
+function previewLogo() {
+  const value=form.elements.logo_data.value;
+  $('logo-preview-wrap').hidden=!value;
+  if(value) $('logo-preview').src=value; else $('logo-preview').removeAttribute('src');
+}
+$('logo-upload').addEventListener('change',async()=>{
+  const file=$('logo-upload').files[0];
+  if(!file)return;
+  if(!['image/png','image/jpeg'].includes(file.type)||file.size>262144){notice('Choose a PNG or JPEG logo under 256 KB.');$('logo-upload').value='';return;}
+  $('save').disabled=true;
+  try {
+    const value=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Could not read logo.'));reader.readAsDataURL(file);});
+    const image=new Image();image.src=value;
+    await image.decode();
+    if(image.naturalWidth>2048||image.naturalHeight>2048)throw new Error('Choose a logo no larger than 2048 × 2048 pixels.');
+    form.elements.logo_data.value=value;previewLogo();
+  }catch(e){notice(e.message || 'Could not read logo.');}
+  finally{$('save').disabled=false;$('logo-upload').value='';}
+});
+$('remove-logo').addEventListener('click',()=>{form.elements.logo_data.value='';$('logo-upload').value='';previewLogo();});

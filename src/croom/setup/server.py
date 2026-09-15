@@ -95,7 +95,7 @@ class SetupServer:
             )
         self._salt = secrets.token_bytes(16)
         self._password_hash = self._hash(self.password)
-        self.app = web.Application(client_max_size=32768, middlewares=[self.boundary])
+        self.app = web.Application(client_max_size=400000, middlewares=[self.boundary])
         self.app.add_routes(
             [
                 web.get("/", self.index),
@@ -154,7 +154,7 @@ class SetupServer:
             {
                 "Cache-Control": "no-store",
                 "X-Content-Type-Options": "nosniff",
-                "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+                "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
                 "Referrer-Policy": "no-referrer",
             }
         )

@@ -3,7 +3,9 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel
+
+from croom_ui.tv import RoomTV
 
 
 class RoomDisplays:
@@ -11,21 +13,7 @@ class RoomDisplays:
         self.runtime = runtime
         self.controller = controller
         self.fullscreen = fullscreen
-        self.tv = QWidget()
-        self.tv.setWindowTitle("Croom TV")
-        self.tv.setStyleSheet("background:#101b2b; color:#edf4ff;")
-        layout = QVBoxLayout(self.tv)
-        self.title = QLabel()
-        self.title.setAlignment(Qt.AlignCenter)
-        self.title.setTextFormat(Qt.PlainText)
-        self.title.setStyleSheet("font-size:48px; font-weight:bold;")
-        self.message = QLabel("Use the touchscreen to select and join a meeting.")
-        self.message.setAlignment(Qt.AlignCenter)
-        self.message.setStyleSheet("font-size:24px;")
-        layout.addStretch()
-        layout.addWidget(self.title)
-        layout.addWidget(self.message)
-        layout.addStretch()
+        self.tv = RoomTV(runtime)
         self.labels = []
         self._placement = None
         self._inventory_signature = None
@@ -141,6 +129,7 @@ class RoomDisplays:
             subprocess.run(["labwc", "--reconfigure"], check=True, timeout=5, capture_output=True)
 
     def refresh(self):
+        self.tv.refresh()
         controller, tv = self.roles()
         roles = (
             controller.name() if controller else None,
@@ -187,7 +176,6 @@ class RoomDisplays:
             if controller:
                 self.place(self.controller, controller, self.fullscreen)
             if tv and tv != controller:
-                self.title.setText(self.runtime.config.room.name)
                 self.place(self.tv, tv, True)
                 # Keep control focus on the touch panel; do not repeatedly raise either window.
                 self.controller.activateWindow()

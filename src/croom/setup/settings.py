@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import tempfile
@@ -45,6 +46,11 @@ class RoomSettings:
             "timezone": cfg.room.timezone,
             "controller_output": cfg.display.controller_output,
             "meeting_output": cfg.display.meeting_output,
+            "brand_name": cfg.display.brand_name,
+            "accent_color": cfg.display.accent_color,
+            "welcome_message": cfg.display.welcome_message,
+            "logo_data": cfg.display.logo_data,
+            "hide_meeting_titles": cfg.display.hide_meeting_titles,
             "camera_default_on": cfg.meeting.camera_default_on,
             "mic_default_on": cfg.meeting.mic_default_on,
             "calendar_enabled": bool(cfg.calendar.microsoft_auth_mode),
@@ -69,6 +75,8 @@ class RoomSettings:
             "tenant_id",
             "client_id",
             "room_mailbox",
+            "brand_name",
+            "welcome_message",
         ):
             if not isinstance(merged[key], str) or len(merged[key]) > 255:
                 raise ValueError("Invalid room setting")
@@ -79,7 +87,19 @@ class RoomSettings:
             ZoneInfo(merged["timezone"])
         except (ZoneInfoNotFoundError, ValueError):
             raise ValueError("Enter a valid timezone, such as Australia/Melbourne") from None
-        for key in ("calendar_enabled", "camera_default_on", "mic_default_on"):
+        if not isinstance(merged["accent_color"], str) or not re.fullmatch(
+            r"#[0-9a-fA-F]{6}", merged["accent_color"]
+        ):
+            raise ValueError("Choose a valid brand colour")
+        from croom.setup.branding import normalize_logo
+
+        merged["logo_data"] = normalize_logo(merged["logo_data"])
+        for key in (
+            "calendar_enabled",
+            "camera_default_on",
+            "mic_default_on",
+            "hide_meeting_titles",
+        ):
             if type(merged[key]) is not bool:
                 raise ValueError("Invalid switch value")
         if merged["meeting_output"] and merged["meeting_output"] == merged["controller_output"]:
@@ -91,7 +111,18 @@ class RoomSettings:
         data = yaml.safe_load(self.path.read_text()) or {}
         data.setdefault("room", {}).update(name=merged["room_name"], timezone=merged["timezone"])
         data.setdefault("display", {}).update(
-            controller_output=merged["controller_output"], meeting_output=merged["meeting_output"]
+            **{
+                key: merged[key]
+                for key in (
+                    "controller_output",
+                    "meeting_output",
+                    "brand_name",
+                    "accent_color",
+                    "welcome_message",
+                    "logo_data",
+                    "hide_meeting_titles",
+                )
+            }
         )
         data.setdefault("meeting", {}).update(
             join_policy="manual",

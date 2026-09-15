@@ -99,3 +99,55 @@ def test_configuration_commit_failure_keeps_old_settings_and_removes_new_secret(
             )
     assert store.path.read_bytes() == original
     assert not list((store.state_dir / "credentials").glob("*.json"))
+
+
+def test_branding_roundtrip_normalizes_logo_and_preserves_other_settings(store):
+    import base64
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QImage, QColor
+
+    image = QImage(900, 240, QImage.Format_ARGB32)
+    image.fill(QColor("#53d6c5"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.WriteOnly)
+    assert image.save(buffer, "PNG")
+    logo = "data:image/png;base64," + base64.b64encode(bytes(buffer.data())).decode()
+    result = store.save(
+        {
+            "brand_name": "Our team",
+            "accent_color": "#eaa733",
+            "welcome_message": "Welcome here.",
+            "hide_meeting_titles": True,
+            "logo_data": logo,
+        }
+    )
+    decoded = QImage.fromData(base64.b64decode(result["logo_data"].split(",")[1]))
+    assert decoded.width() <= 480 and decoded.height() <= 120
+    cfg = Config.from_dict(yaml.safe_load(store.path.read_text()))
+    assert cfg.display.brand_name == "Our team"
+    assert cfg.display.hide_meeting_titles is True
+    assert cfg.to_dict()["display"]["logo_data"] == result["logo_data"]
+    store.save({"room_name": "Renamed"})
+    assert store.read()["logo_data"] == result["logo_data"]
+    assert store.save({"logo_data": ""})["logo_data"] == ""
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"accent_color": "url(https://example.com)"},
+        {"accent_color": "#12345"},
+        {"brand_name": "x" * 256},
+        {"welcome_message": ["unexpected"]},
+        {"hide_meeting_titles": "yes"},
+        {"logo_data": "/etc/passwd"},
+        {"logo_data": "data:image/svg+xml;base64,PHN2Zz4="},
+        {"logo_data": "data:image/png;base64,bm90IGFuIGltYWdl"},
+        {"logo_data": "x" * 350001},
+    ],
+)
+def test_invalid_branding_does_not_modify_config(store, data):
+    original = store.path.read_bytes()
+    with pytest.raises(ValueError):
+        store.save(data)
+    assert store.path.read_bytes() == original

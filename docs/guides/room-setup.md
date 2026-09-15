@@ -32,6 +32,27 @@ Leave buttons operate that browser. No call starts automatically. The browser us
 its default webcam, microphone and speakers; individual device selection is not
 implemented in setup. Real Teams controls and hardware still need an attended test.
 
+## TV appearance and branding
+
+In Room setup, open **TV appearance & branding**. Set an optional brand name,
+accent colour, welcome message and logo, then **Save and apply settings**. A blank
+brand name uses the room name. Logos are PNG/JPEG, at most 256 KB and 2048×2048;
+the app stores a small normalized PNG on the Pi. Transparent PNGs suit the dark
+background. **Remove logo** takes effect when saved.
+
+The TV shows the local clock, room availability, current/next booking and up to
+four bookings in the next seven days. Ended, cancelled and declined bookings are
+excluded. Overlapping reservations keep the room marked booked until the final
+contiguous reservation ends. A failed sync, missing first sync or data older than
+five minutes (or three configured polling intervals, if longer) displays unknown
+availability rather than claiming the room is free.
+
+**Hide meeting titles on the TV** replaces titles with “Reserved meeting” while
+keeping times visible. The touchscreen still shows its normal booking list. TV
+branding applies to the standby calendar; Teams has its own meeting interface.
+The native layout scales to 1080p and 4K without an additional browser and only
+repaints when displayed information changes.
+
 ## Desktop startup
 
 Install the Python `microsoft` and `ui` extras, Playwright, and Chromium in the room

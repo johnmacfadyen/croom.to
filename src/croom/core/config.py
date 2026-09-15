@@ -125,6 +125,11 @@ class DisplayConfig:
     touch_enabled: bool = True
     controller_output: str = ""
     meeting_output: str = ""
+    brand_name: str = ""
+    accent_color: str = "#53d6c5"
+    welcome_message: str = "A little space for big ideas."
+    logo_data: str = ""
+    hide_meeting_titles: bool = False
 
 
 @dataclass
@@ -278,6 +283,11 @@ class Config:
                 "touch_enabled": self.display.touch_enabled,
                 "controller_output": self.display.controller_output,
                 "meeting_output": self.display.meeting_output,
+                "brand_name": self.display.brand_name,
+                "accent_color": self.display.accent_color,
+                "welcome_message": self.display.welcome_message,
+                "logo_data": self.display.logo_data,
+                "hide_meeting_titles": self.display.hide_meeting_titles,
             },
             "dashboard": {
                 "enabled": self.dashboard.enabled,
