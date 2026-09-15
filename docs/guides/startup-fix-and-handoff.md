@@ -1,5 +1,23 @@
 # Startup fix and development handoff
 
+## Live calendar and TV display — 2026-09-15
+
+Microsoft room-calendar access is now configured on the Pi; a live refresh returned
+one booking with no sync error. Credentials remain only in the Pi's protected state.
+The connected Samsung TV is HDMI-A-1 at 3840×2160, positioned to the right of DSI-1
+(800×480). Both saved output roles match the detected displays.
+
+The first TV selection/connection left the TV showing desktop wallpaper despite
+API readiness reporting success. Reapplying settings did not restore the welcome
+window. Standalone native Qt placement checks worked on both outputs. Restarting
+`croom-room.service` restored the real room welcome screen, verified with a capture
+of the HDMI output. The exact cause of the old process's missing window remains
+unconfirmed; hotplug/window visibility recovery and checking actual window placement
+in readiness are follow-up work. No application source changed for this recovery.
+
+The Pi still reported active undervoltage (`0x50005`). Actual camera/microphone,
+Teams joining and reboot/autostart validation remain outstanding.
+
 ## Readable setup passwords — 2026-09-15
 
 Application revision **ab7cafac58cc4e91b8dd7f65749340e3202a0399** is published and
