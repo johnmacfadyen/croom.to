@@ -1,5 +1,44 @@
 # Startup fix and development handoff
 
+## Teams guest-name and fullscreen correction — 2026-09-15
+
+Application revision **e3fe77b6cf2a73bac73923f71969e051ada59cd9** is published and
+installed. A real join failed with a generic RuntimeError while the Teams launcher
+was still blank; the guest pre-join/name screen appeared later. The old flow used
+short fixed waits, swallowed name-field failures, and never resumed after error.
+The created Playwright context also opened a window after Chromium's launch-time
+fullscreen flag had been processed, leaving Teams in a small window on the TV.
+
+The provider now waits up to 180 seconds for the pre-join screen, handles the
+browser-launch choice and navigation, fills and verifies the configured room name,
+and waits for verifiable media controls before applying defaults. Failures report
+the specific join stage without exposing browser exception contents or meeting
+URLs. The touchscreen and setup status expose loading progress. A failed attempt
+still requires a new user Join; no background retry is scheduled.
+
+The actual page window is placed through Chromium's window protocol and then made
+fullscreen; fixed viewport emulation is disabled. On the Pi, a local synthetic
+pre-join page verified automatic **Cubby House** entry, camera/microphone-off
+controls, and fullscreen bounds **1920×1080 at 800,0**. No real meeting, camera
+capture or microphone recording was started during this verification. The real
+Teams retry and media/admission controls remain an attended test.
+
+Focused checks: **146 passed**; the 14 provider-control checks passed again after
+the final conservative media-label adjustment. All **102** package files matched
+the deployed wheel, SHA-256
+`3d2df774e8d38962ebf46025bdc098c22f1183094567f05dcb76695870fb7257`.
+The current wheel is retained across reboots at
+`/opt/croom/releases/e3fe77b/croom-2.0.0.dev0-py3-none-any.whl`; backup is
+`/opt/croom/backups/pre-prejoin-e3fe77b`. Provenance is under `teams_prejoin_update`.
+
+The 2 GB Pi was using swap while driving 4096×2160. HDMI-A-1 was reduced to
+1920×1080 at 60 Hz, with DSI-1 unchanged. A profile in John's previously empty
+`~/.config/kanshi/config` preserves this mode and extended layout on reconnect;
+the prior file is backed up with the deployment. Kernel logs recorded new
+undervoltage warnings during browser startup despite point-in-time `0x50000`
+readings. Stable sustained power under meeting load is therefore still unproven.
+
+
 ## Camera and microphone detected after power repair — 2026-09-15
 
 The owner reports the power issue resolved. A live check after the Pi's recent
