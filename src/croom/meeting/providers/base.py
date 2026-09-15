@@ -40,6 +40,7 @@ class MeetingInfo:
     is_muted: bool = False
     is_camera_on: bool = True
     error_message: str = ""
+    progress: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -14,10 +14,13 @@ from croom.meeting.service import MeetingService
 async def test_toggle_reads_actual_control_and_confirms_state():
     provider = TeamsProvider()
     label = {"value": "Unmute microphone"}
+
     async def attribute(name):
         return label["value"] if name == "aria-label" else None
+
     async def click():
         label["value"] = "Mute microphone"
+
     button = SimpleNamespace(get_attribute=attribute, click=click)
     provider._page = SimpleNamespace(query_selector=AsyncMock(return_value=button))
     provider._state = MeetingState.CONNECTED
@@ -40,8 +43,10 @@ async def test_missing_media_control_does_not_report_success():
 @pytest.mark.asyncio
 async def test_leave_failure_keeps_error_state():
     provider = TeamsProvider()
-    provider._page = SimpleNamespace(query_selector=AsyncMock(return_value=None),
-                                      goto=AsyncMock(side_effect=RuntimeError("browser error")))
+    provider._page = SimpleNamespace(
+        query_selector=AsyncMock(return_value=None),
+        goto=AsyncMock(side_effect=RuntimeError("browser error")),
+    )
     provider._state = MeetingState.CONNECTED
     provider._current_meeting = SimpleNamespace(state=MeetingState.CONNECTED)
     with pytest.raises(RuntimeError, match="Could not leave"):
@@ -54,12 +59,18 @@ async def test_leave_failure_keeps_error_state():
 async def test_leave_cancels_join_and_duplicate_join_is_rejected():
     service = MeetingService(Config())
     started = asyncio.Event()
+
     async def join(*args, **kwargs):
         started.set()
         await asyncio.Event().wait()
-    provider = SimpleNamespace(join_meeting=join, state=MeetingState.IN_LOBBY, leave_meeting=AsyncMock())
+
+    provider = SimpleNamespace(
+        join_meeting=join, state=MeetingState.IN_LOBBY, leave_meeting=AsyncMock()
+    )
     service._providers = {"teams": provider}
-    task = asyncio.create_task(service.join_meeting("https://teams.microsoft.com/l/meetup-join/test"))
+    task = asyncio.create_task(
+        service.join_meeting("https://teams.microsoft.com/l/meetup-join/test")
+    )
     await started.wait()
     with pytest.raises(RuntimeError, match="already in progress"):
         await service.join_meeting("https://teams.microsoft.com/l/meetup-join/test")
@@ -69,7 +80,10 @@ async def test_leave_cancels_join_and_duplicate_join_is_rejected():
     assert service.state == MeetingState.IDLE
 
 
-@pytest.mark.parametrize("url", ["https://teams.microsoft.com.evil.example/", "https://evil.example/?teams.microsoft.com"])
+@pytest.mark.parametrize(
+    "url",
+    ["https://teams.microsoft.com.evil.example/", "https://evil.example/?teams.microsoft.com"],
+)
 def test_teams_rejects_lookalike_hosts(url):
     assert not TeamsProvider.can_handle_url(url)
 
@@ -78,7 +92,7 @@ def test_teams_rejects_lookalike_hosts(url):
 async def test_failed_browser_launch_can_be_left_and_retried():
     provider = TeamsProvider()
     provider._state = MeetingState.ERROR
-    provider._current_meeting = SimpleNamespace(error_message='launch failed')
+    provider._current_meeting = SimpleNamespace(error_message="launch failed")
     provider._playwright = SimpleNamespace(stop=AsyncMock())
     handle = provider._playwright
     await provider.leave_meeting()
@@ -90,14 +104,140 @@ async def test_failed_browser_launch_can_be_left_and_retried():
 @pytest.mark.asyncio
 async def test_system_browser_initialization_is_lazy(tmp_path, monkeypatch):
     import croom.meeting.providers.teams as module
-    path = tmp_path/'chromium'
-    path.write_text('#!/bin/sh\n')
+
+    path = tmp_path / "chromium"
+    path.write_text("#!/bin/sh\n")
     path.chmod(0o700)
-    monkeypatch.setattr(module, 'PLAYWRIGHT_AVAILABLE', True)
+    monkeypatch.setattr(module, "PLAYWRIGHT_AVAILABLE", True)
     provider = TeamsProvider()
     provider.configure_browser(str(path))
     provider._open_browser = AsyncMock()
     await provider.initialize()
     provider._open_browser.assert_not_awaited()
-    provider.set_window_bounds({'x':800, 'y':0, 'width':1920, 'height':1080})
-    assert '--window-position=800,0' in provider._placement_args()
+    provider.set_window_bounds({"x": 800, "y": 0, "width": 1920, "height": 1080})
+    assert "--window-position=800,0" in provider._placement_args()
+
+
+@pytest.mark.asyncio
+async def test_prejoin_waits_for_delayed_controls_without_joining(monkeypatch):
+    provider = TeamsProvider()
+    calls = {"count": 0}
+
+    async def control(kind):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise RuntimeError("Not loaded yet")
+        return object(), False
+
+    provider._media_control = control
+    provider._page = SimpleNamespace(
+        is_closed=lambda: False, query_selector=AsyncMock(return_value=None)
+    )
+    provider._click_join_button = AsyncMock()
+    monkeypatch.setattr("croom.meeting.providers.teams.asyncio.sleep", AsyncMock())
+    await provider._wait_for_prejoin(timeout=1)
+    assert calls["count"] >= 4
+    provider._click_join_button.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_blank_prejoin_fails_with_stage_and_never_clicks_join():
+    from croom.core.room_calendar import RoomActionError
+
+    provider = TeamsProvider()
+    provider._open_browser = AsyncMock()
+    provider._page = SimpleNamespace(goto=AsyncMock())
+    provider._wait_for_prejoin = AsyncMock(
+        side_effect=RuntimeError("secret-url-or-browser-details")
+    )
+    provider._handle_prejoin = AsyncMock()
+    provider._click_join_button = AsyncMock()
+    with pytest.raises(RoomActionError, match="load the Teams pre-join screen") as error:
+        await provider.join_meeting("https://teams.microsoft.com/l/meetup-join/fixture")
+    assert "secret-url" not in str(error.value)
+    assert provider.state == MeetingState.ERROR
+    assert provider.current_meeting.progress == ""
+    provider._handle_prejoin.assert_not_awaited()
+    provider._click_join_button.assert_not_awaited()
+    provider._page.goto.assert_awaited_once_with(
+        "https://teams.microsoft.com/l/meetup-join/fixture",
+        wait_until="domcontentloaded",
+        timeout=60000,
+    )
+
+
+@pytest.mark.asyncio
+async def test_prejoin_follows_browser_choice_once_and_waits_for_navigation(monkeypatch):
+    from croom.meeting.providers.teams import PlaywrightError as Error
+
+    provider = TeamsProvider()
+    browser_button = SimpleNamespace(is_visible=AsyncMock(return_value=True), click=AsyncMock())
+
+    async def query(selector):
+        return None if selector.startswith("input") else browser_button
+
+    provider._page = SimpleNamespace(
+        is_closed=lambda: False, query_selector=AsyncMock(side_effect=query)
+    )
+    provider._media_control = AsyncMock(
+        side_effect=[
+            RuntimeError("loading"),
+            Error("context destroyed"),
+            RuntimeError("loading"),
+            (object(), False),
+            (object(), False),
+        ]
+    )
+    monkeypatch.setattr("croom.meeting.providers.teams.asyncio.sleep", AsyncMock())
+    await provider._wait_for_prejoin(timeout=1)
+    browser_button.click.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fullscreen_applies_to_created_window_after_placement():
+    provider = TeamsProvider()
+    provider.set_window_bounds({"x": 800, "y": 0, "width": 1920, "height": 1080})
+    session = SimpleNamespace(send=AsyncMock(return_value={"windowId": 9}), detach=AsyncMock())
+    provider._context = SimpleNamespace(new_cdp_session=AsyncMock(return_value=session))
+    provider._page = object()
+    await provider._place_browser_window()
+    calls = session.send.await_args_list
+    assert calls[0].args == ("Browser.getWindowForTarget",)
+    assert calls[1].args[1]["bounds"] == {"windowState": "normal"}
+    assert calls[2].args[1]["bounds"] == {"left": 800, "top": 0, "width": 1920, "height": 1080}
+    assert calls[3].args[1]["bounds"] == {"windowState": "fullscreen"}
+    session.detach.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_guest_name_is_filled_before_media_settings_and_join():
+    provider = TeamsProvider()
+    name = SimpleNamespace(
+        is_visible=AsyncMock(return_value=True),
+        fill=AsyncMock(),
+        input_value=AsyncMock(return_value="Cubby House"),
+    )
+    provider._page = SimpleNamespace(
+        query_selector=AsyncMock(return_value=name), is_closed=lambda: False
+    )
+    provider._media_control = AsyncMock(return_value=(object(), False))
+    provider._set_media = AsyncMock()
+    await provider._handle_prejoin("Cubby House", False, False)
+    name.fill.assert_awaited_once_with("Cubby House")
+    assert provider._set_media.await_args_list[0].args == ("camera", False)
+    assert provider._set_media.await_args_list[1].args == ("microphone", False)
+
+
+@pytest.mark.asyncio
+async def test_failed_name_entry_stops_before_media_or_join():
+    provider = TeamsProvider()
+    name = SimpleNamespace(
+        is_visible=AsyncMock(return_value=True),
+        fill=AsyncMock(),
+        input_value=AsyncMock(return_value=""),
+    )
+    provider._page = SimpleNamespace(query_selector=AsyncMock(return_value=name))
+    provider._set_media = AsyncMock()
+    with pytest.raises(RuntimeError, match="room name"):
+        await provider._handle_prejoin("Cubby House", False, False)
+    provider._set_media.assert_not_awaited()

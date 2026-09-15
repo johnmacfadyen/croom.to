@@ -98,6 +98,7 @@ class RoomRuntime:
             },
             "meeting": {
                 "state": meeting.state.value if meeting else "unavailable",
+                "progress": getattr(meeting.current_meeting, "progress", "") if meeting else "",
                 "platforms": meeting.get_available_platforms() if meeting else [],
             },
         }

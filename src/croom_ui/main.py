@@ -175,8 +175,10 @@ class RoomWindow(QWidget):
             sync = "Calendar has not synced"
         if not meeting.get_available_platforms():
             state = "no meeting provider available"
+        progress = getattr(meeting.current_meeting, "progress", "")
         self.status.setText(
-            f"{sync} · Meeting: {state}" + ("\n" + display_issue if display_issue else "")
+            f"{sync} · {progress or ('Meeting: ' + state)}"
+            + ("\n" + display_issue if display_issue else "")
         )
         current = meeting.current_meeting
         if current:

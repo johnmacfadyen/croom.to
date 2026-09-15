@@ -11,14 +11,27 @@ from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
 from croom.meeting.providers.base import MeetingProvider, MeetingInfo, MeetingState
+from croom.core.room_calendar import RoomActionError
 
 logger = logging.getLogger(__name__)
 
 try:
-    from playwright.async_api import async_playwright, Browser, Page, BrowserContext
+    from playwright.async_api import (
+        async_playwright,
+        Browser,
+        Page,
+        BrowserContext,
+        Error as PlaywrightError,
+    )
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+
+    class PlaywrightError(Exception):
+        """Placeholder for optional-browser-free service imports and tests."""
+
+        pass
 
 
 class TeamsProvider(MeetingProvider):
@@ -60,6 +73,7 @@ class TeamsProvider(MeetingProvider):
     def can_handle_url(cls, url: str) -> bool:
         """Check if URL is a Teams meeting link."""
         from croom.meeting.providers.base import detect_platform
+
         return detect_platform(url) == "teams"
 
     @classmethod
@@ -78,6 +92,7 @@ class TeamsProvider(MeetingProvider):
 
         # For other formats, use hash of URL
         import hashlib
+
         return hashlib.md5(url.encode()).hexdigest()[:12]
 
     def configure_browser(self, executable_path=""):
@@ -92,10 +107,14 @@ class TeamsProvider(MeetingProvider):
             raise RuntimeError("Playwright not installed")
         if self._executable_path:
             import os
-            if not os.path.isfile(self._executable_path) or not os.access(self._executable_path, os.X_OK):
+
+            if not os.path.isfile(self._executable_path) or not os.access(
+                self._executable_path, os.X_OK
+            ):
                 raise RuntimeError("Configured browser executable is unavailable")
         else:
             from pathlib import Path
+
             async with async_playwright() as playwright:
                 if not Path(playwright.chromium.executable_path).exists():
                     raise RuntimeError("Install the Playwright Chromium browser")
@@ -117,23 +136,58 @@ class TeamsProvider(MeetingProvider):
                 "--disable-dev-shm-usage",
                 "--class=croom-meeting",
                 "--ozone-platform=x11",
-            ] + self._placement_args()
+            ]
+            + self._placement_args(),
         )
 
         self._context = await self._browser.new_context(
-            permissions=["camera", "microphone"],
-            viewport={"width": 1920, "height": 1080}
+            permissions=["camera", "microphone"], no_viewport=True
         )
 
         self._page = await self._context.new_page()
+        await self._place_browser_window()
 
         logger.info("Teams browser opened")
 
     def _placement_args(self):
         bounds = self._window_bounds or {"x": 0, "y": 0, "width": 1280, "height": 720}
-        return [f"--window-position={bounds['x']},{bounds['y']}",
-                f"--window-size={bounds['width']},{bounds['height']}",
-                "--start-fullscreen"]
+        return [
+            f"--window-position={bounds['x']},{bounds['y']}",
+            f"--window-size={bounds['width']},{bounds['height']}",
+        ]
+
+    async def _place_browser_window(self):
+        # A new Playwright context creates its own window after Chromium's launch
+        # flags were processed. Place that actual window before going fullscreen.
+        if not self._window_bounds:
+            return
+        session = await self._context.new_cdp_session(self._page)
+        try:
+            window = await session.send("Browser.getWindowForTarget")
+            window_id = window["windowId"]
+            bounds = self._window_bounds
+            await session.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "normal"}},
+            )
+            await session.send(
+                "Browser.setWindowBounds",
+                {
+                    "windowId": window_id,
+                    "bounds": {
+                        "left": bounds["x"],
+                        "top": bounds["y"],
+                        "width": bounds["width"],
+                        "height": bounds["height"],
+                    },
+                },
+            )
+            await session.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "fullscreen"}},
+            )
+        finally:
+            await session.detach()
 
     async def shutdown(self) -> None:
         """Shutdown browser."""
@@ -163,7 +217,7 @@ class TeamsProvider(MeetingProvider):
         meeting_url: str,
         display_name: str = "Conference Room",
         camera_on: bool = True,
-        mic_on: bool = True
+        mic_on: bool = True,
     ) -> MeetingInfo:
         """Join a Teams meeting."""
         if not self.can_handle_url(meeting_url):
@@ -175,84 +229,113 @@ class TeamsProvider(MeetingProvider):
             meeting_id=meeting_id,
             meeting_url=meeting_url,
             is_camera_on=camera_on,
-            is_muted=not mic_on
+            is_muted=not mic_on,
         )
 
         self._set_state(MeetingState.JOINING)
-        logger.info(f"Joining Teams meeting: {meeting_id}")
+        logger.info("Joining Teams meeting")
 
+        stage = "open the meeting browser"
         try:
+            self._current_meeting.progress = "Opening meeting browser…"
             await self._open_browser()
-            # Navigate to meeting
-            await self._page.goto(meeting_url, wait_until="networkidle")
-            await asyncio.sleep(2)
+            stage = "load the Teams page"
+            self._current_meeting.progress = "Loading Teams…"
+            await self._page.goto(meeting_url, wait_until="domcontentloaded", timeout=60000)
 
-            # Handle "Continue on this browser" option
-            await self._select_browser_option()
+            stage = "load the Teams pre-join screen"
+            self._current_meeting.progress = "Waiting for Teams pre-join screen…"
+            await self._wait_for_prejoin()
 
-            # Handle pre-join screen
+            stage = "enter the room name and verify camera and microphone settings"
+            self._current_meeting.progress = "Checking camera and microphone settings…"
             await self._handle_prejoin(display_name, camera_on, mic_on)
 
-            # Click join button
+            stage = "submit the Teams join request"
+            self._current_meeting.progress = "Joining Teams…"
             await self._click_join_button()
 
-            # Wait for connection
+            stage = "confirm admission to the meeting"
+            self._current_meeting.progress = "Waiting for Teams to admit this room…"
             await self._wait_for_connection()
 
             _, self._current_meeting.is_camera_on = await self._media_control("camera")
             _, microphone_on = await self._media_control("microphone")
             self._current_meeting.is_muted = not microphone_on
             self._set_state(MeetingState.CONNECTED)
-            logger.info(f"Connected to Teams meeting: {meeting_id}")
+            self._current_meeting.progress = ""
+            logger.info("Connected to Teams meeting")
 
             return self._current_meeting
 
         except Exception as e:
-            logger.error("Failed to join Teams meeting; check the browser")
-            self._current_meeting.error_message = "Teams join failed"
+            message = f"Teams could not {stage}. Check the TV, then tap Leave before retrying."
+            logger.error("Teams join failed at %s (%s)", stage, type(e).__name__)
+            self._current_meeting.progress = ""
+            self._current_meeting.error_message = message
             self._set_state(MeetingState.ERROR)
-            raise
+            raise RoomActionError(message) from None
 
-    async def _select_browser_option(self) -> None:
-        """Select 'Continue on this browser' option."""
-        try:
-            # Look for browser option
-            selectors = [
-                'button:has-text("Continue on this browser")',
-                'button:has-text("Join on the web")',
-                '[data-tid="joinOnWeb"]',
-            ]
-
-            for selector in selectors:
+    async def _wait_for_prejoin(self, timeout=180):
+        """Wait for actual controls, including slow navigation from Teams' launcher."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        browser_options = (
+            'button:has-text("Continue on this browser"), '
+            'button:has-text("Continue in this browser"), '
+            'button:has-text("Join on the web"), '
+            '[data-tid="joinOnWeb"]'
+        )
+        browser_selected = False
+        while asyncio.get_running_loop().time() < deadline:
+            if self._page.is_closed():
+                raise RuntimeError("Meeting browser was closed")
+            try:
+                name = await self._page.query_selector(
+                    'input[placeholder*="name" i], input[aria-label*="name" i]'
+                )
+                if name and await name.is_visible():
+                    return
                 try:
-                    btn = await self._page.wait_for_selector(selector, timeout=5000)
-                    if btn:
-                        await btn.click()
-                        await asyncio.sleep(2)
-                        return
-                except Exception:
-                    continue
+                    await self._media_control("camera")
+                    await self._media_control("microphone")
+                    return
+                except RuntimeError:
+                    # Missing/unreadable controls do not authorize unknown media.
+                    pass
+                if not browser_selected:
+                    button = await self._page.query_selector(browser_options)
+                    if button and await button.is_visible():
+                        await button.click(timeout=5000)
+                        browser_selected = True
+            except PlaywrightError:
+                # Redirects can destroy the old page's execution context while
+                # a query is in flight. Continue until the overall deadline.
+                pass
+            await asyncio.sleep(0.5)
+        raise RuntimeError("Teams pre-join controls did not become ready")
 
-        except Exception as e:
-            logger.debug(f"No browser selection needed: {e}")
-
-    async def _handle_prejoin(
-        self,
-        display_name: str,
-        camera_on: bool,
-        mic_on: bool
-    ) -> None:
+    async def _handle_prejoin(self, display_name: str, camera_on: bool, mic_on: bool) -> None:
         """Handle Teams pre-join screen."""
-        # Set display name
-        try:
-            name_input = await self._page.wait_for_selector(
-                'input[placeholder*="name" i], input[aria-label*="name" i]',
-                timeout=5000
-            )
-            if name_input:
-                await name_input.fill(display_name)
-        except Exception:
-            pass
+        # The guest name field is optional only for a signed-in pre-join page.
+        # Do not silently swallow a failed fill and continue with an empty name.
+        name_input = await self._page.query_selector(
+            'input[placeholder*="name" i], input[aria-label*="name" i]'
+        )
+        if name_input and await name_input.is_visible():
+            await name_input.fill(display_name)
+            if await name_input.input_value() != display_name:
+                raise RuntimeError("Teams room name could not be entered")
+
+        deadline = asyncio.get_running_loop().time() + 30
+        while True:
+            try:
+                await self._media_control("camera")
+                await self._media_control("microphone")
+                break
+            except (RuntimeError, PlaywrightError):
+                if asyncio.get_running_loop().time() >= deadline or self._page.is_closed():
+                    raise RuntimeError("Teams media controls are not ready") from None
+                await asyncio.sleep(0.5)
 
         # Verify the actual controls before joining; unknown media state must
         # not silently enable a microphone or camera against room defaults.
@@ -276,9 +359,9 @@ class TeamsProvider(MeetingProvider):
                 return button, False
             if "mute" in label:
                 return button, True
-        elif "turn off" in label:
+        elif "turn off" in label or "turn camera off" in label:
             return button, True
-        elif "turn on" in label:
+        elif "turn on" in label or "turn camera on" in label:
             return button, False
         raise RuntimeError(f"Cannot verify Teams {kind} state")
 
@@ -320,7 +403,9 @@ class TeamsProvider(MeetingProvider):
             mute = await self._page.query_selector('[data-tid="toggle-mute"]')
             if toolbar and mute:
                 return
-            lobby = await self._page.query_selector('[data-tid="lobby-screen"], [data-tid="lobby-message"]')
+            lobby = await self._page.query_selector(
+                '[data-tid="lobby-screen"], [data-tid="lobby-message"]'
+            )
             if lobby and self.state != MeetingState.IN_LOBBY:
                 self._set_state(MeetingState.IN_LOBBY)
             await asyncio.sleep(1)
