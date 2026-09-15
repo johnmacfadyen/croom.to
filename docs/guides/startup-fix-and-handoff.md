@@ -1,5 +1,30 @@
 # Startup fix and development handoff
 
+## Camera and microphone detected after power repair — 2026-09-15
+
+The owner reports the power issue resolved. A live check after the Pi's recent
+boot returned `0x50000`: historical undervoltage/throttling flags only, with no
+active flags at that moment. The Logitech BRIO Ultra HD Webcam now enumerates over
+USB. Its camera is accessible to John at `/dev/video0` (the reported format was
+1920×1080 MJPEG at 30 fps), and its USB microphone is available through PipeWire.
+The BRIO camera and microphone were the desktop defaults; microphone volume was
+100% and unmuted. These were device/format checks, not media capture or a call test.
+
+`croom-room.service` was active after boot with zero automatic restarts. HTTPS,
+Microsoft calendar sync and both screen roles were healthy. HDMI-A-1 now reported
+4096×2160, alongside the 800×480 DSI controller.
+
+The owner selected **TV speakers over HDMI** for meeting audio. At inspection the
+Pi still defaulted to its analog headphone output; the connected HDMI audio sink
+was available, unmuted, at 40%. A reboot interrupted the first connection
+attempts. Once the desktop returned, HDMI was selected using WirePlumber and
+verified as the default output, unmuted at 40%. The BRIO remained the default
+microphone, and WirePlumber's `default-nodes` state contained the saved HDMI
+selection. No test sound or camera/microphone recording was made. A real Teams
+call and persistence across another reboot remain unverified. Croom was active
+with zero automatic restarts after this reboot; power flags remained `0x50000`.
+
+
 ## Branded TV calendar — 2026-09-15
 
 Application revision **5f1ac2dddd38c303f50bf898723b21c7d74d9caf** is published on the
