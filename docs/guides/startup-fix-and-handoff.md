@@ -17,14 +17,27 @@ check also restores fullscreen/TV placement after it is lost, without navigating
 or rejoining; it leaves an already-correct window untouched and stops on shutdown.
 
 **159 focused checks passed.** The revision is pushed to the existing fork branch.
-The wheel and installer are staged at `/opt/croom/releases/85f1ef4`, SHA-256
+The installed wheel and installer are retained at `/opt/croom/releases/85f1ef4`, SHA-256
 `2bcbe04f9e28b4fb979abc7106bade7dc2d9aa420166d7a8a4c097c5ad5bff2a`.
-Activation and the Pi browser smoke test are pending the end of the owner's current
-waiting-room attempt. Do not infer that `error` means the real browser is safe to
-close: the old admission timeout can expire while Teams still waits for admission.
-The installer requires idle unless the owner explicitly finishes the attempt.
+After the owner left the attempt and authorized restart, all **102 installed
+package files** matched the wheel. A local browser test on the Pi verified the
+waiting-room message, continued waiting beyond the connection deadline, admission
+detection using local controls, and automatic recovery after deliberately leaving
+fullscreen. Final bounds were **3840×2160 at 800,0**, and remained stable through
+another window check. This was a local fixture, not a real Teams admission/media
+test. Croom restarted after the verification; HTTPS reported idle, healthy calendar
+sync and both displays ready. The user service was active with zero automatic
+restarts, and HDMI remained the default audio output. The idle power reading was
+`0x50000` (historical flags only), with approximately 1.1 GiB memory available;
+stable power and performance during a real call remain unverified.
+
+Provenance is recorded under `teams_lobby_fullscreen_update` in
+`/opt/croom/DEPLOYMENT.json`; backup is `/opt/croom/backups/pre-lobby-85f1ef4`.
 Rollback uses the readable retained 2e814d7 release wheel, avoiding the earlier
-root-only backup read failure. The running version remains 2e814d7 until activation.
+root-only backup read failure. For future updates, do not infer that `error` means
+the real browser is safe to close: the old admission timeout could expire while
+Teams still waited for admission. The installer requires idle unless the owner
+explicitly finishes the attempt.
 
 During this attempt the Pi repeatedly returned **0x50005** (active undervoltage
 and throttling), had all 511 MiB of swap occupied, and sampled CPU idle at 7–10%.
