@@ -1,5 +1,38 @@
 # Startup fix and development handoff
 
+## Branded TV calendar — 2026-09-15
+
+Application revision **5f1ac2dddd38c303f50bf898723b21c7d74d9caf** is published on the
+fork branch and installed on the Pi. The TV now has a scalable dark teal room
+calendar: local clock/date, availability, current/next booking, countdown, up to
+four agenda entries, and a welcome footer. Room setup includes brand name, accent
+colour, welcome message, normalized PNG/JPEG logo upload/removal, and an option to
+hide meeting titles on the TV. Defaults use the existing room name, Cubby House.
+No logo or different organization name was assumed.
+
+Fresh calendar data drives availability. Failed/absent/stale sync never reports
+free; ended/cancelled/declined events are excluded and overlapping reservations
+extend the busy-until time. This is a native Qt view, without another browser or
+continuous animation. Branding changes apply through the existing protected setup
+save flow, which restarts room services only while idle.
+
+Verification: **140 focused checks passed**, including calendar projection,
+privacy, branding persistence, image normalization and invalid input rejection.
+Local renders covered multiple bookings, long titles and failed sync. Browser
+checks verified editing, saving and reloading the branding controls. All **102**
+package files matched the installed wheel, SHA-256
+`484a66cb9a86c04f6ab9aa8f7ab3037a940e8cb7248e3be895f97c2c6cd0122c`.
+The live HDMI-A-1 output was captured and visually checked at 3840×2160: the real
+14:00 booking appeared with a countdown, while the room remained available until
+14:00. HTTPS and calendar sync were healthy; the user service had zero automatic
+restarts. No call was started during this update.
+
+Backup: `/opt/croom/backups/pre-tv-branding-5f1ac2d` contains the previous wheel,
+configuration and deployment record. Provenance is under `tv_branding_update` in
+`/opt/croom/DEPLOYMENT.json`. The Pi again reported active undervoltage (`0x50005`)
+during the preflight. Attended Teams/media and reboot validation remain pending.
+
+
 ## Explain unavailable joins — 2026-09-15
 
 The first attempted join was rejected by the configured one-minute early-join
