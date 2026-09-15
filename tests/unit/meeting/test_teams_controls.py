@@ -241,3 +241,45 @@ async def test_failed_name_entry_stops_before_media_or_join():
     with pytest.raises(RuntimeError, match="room name"):
         await provider._handle_prejoin("Cubby House", False, False)
     provider._set_media.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["camera", "microphone"])
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_native_checkbox_reads_live_checked_state(kind, enabled):
+    provider = TeamsProvider()
+
+    async def attribute(name):
+        return {"type": "checkbox", "aria-label": kind.title()}.get(name)
+
+    checkbox = SimpleNamespace(get_attribute=attribute, is_checked=AsyncMock(return_value=enabled))
+    provider._page = SimpleNamespace(query_selector=AsyncMock(return_value=checkbox))
+    control, state = await provider._media_control(kind)
+    assert control is checkbox
+    assert state is enabled
+
+
+@pytest.mark.asyncio
+async def test_microphone_toggle_is_preferred_to_device_picker():
+    provider = TeamsProvider()
+
+    async def attribute(name):
+        return {
+            "type": "checkbox",
+            "role": "switch",
+            "data-tid": "toggle-mute",
+            "title": "Mute mic (Ctrl+Shift+M)",
+        }.get(name)
+
+    toggle = SimpleNamespace(get_attribute=attribute, is_checked=AsyncMock(return_value=True))
+    picker = SimpleNamespace(
+        get_attribute=AsyncMock(return_value="Selected microphone: BRIO, open microphone options")
+    )
+
+    async def query(selector):
+        return picker if "aria-label" in selector else toggle
+
+    provider._page = SimpleNamespace(query_selector=AsyncMock(side_effect=query))
+    control, enabled = await provider._media_control("microphone")
+    assert control is toggle and enabled is True
+    picker.get_attribute.assert_not_awaited()

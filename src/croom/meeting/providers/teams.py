@@ -343,15 +343,29 @@ class TeamsProvider(MeetingProvider):
         await self._set_media("microphone", mic_on)
 
     async def _media_control(self, kind):
-        selectors = {
-            "camera": '[data-tid="toggle-video"], [data-tid="prejoin-video-toggle"], button[aria-label*="camera" i], [role="switch"][aria-label*="camera" i]',
-            "microphone": '[data-tid="toggle-mute"], [data-tid="prejoin-audio-toggle"], button[aria-label*="mic" i], [role="switch"][aria-label*="mic" i]',
+        # Prefer the actual toggle. A device-picker button can mention "microphone"
+        # and precede it in DOM order, so a combined broad selector is unsafe.
+        toggles = {
+            "camera": '[data-tid="toggle-video"], [data-tid="prejoin-video-toggle"]',
+            "microphone": '[data-tid="toggle-mute"], [data-tid="prejoin-audio-toggle"]',
         }
-        button = await self._page.query_selector(selectors[kind])
+        fallback = {
+            "camera": 'button[aria-label*="turn" i][aria-label*="camera" i], [role="switch"][aria-label*="camera" i]',
+            "microphone": 'button[aria-label^="mute" i], button[aria-label^="unmute" i], [role="switch"][aria-label*="mic" i]',
+        }
+        button = await self._page.query_selector(toggles[kind])
+        if not button:
+            button = await self._page.query_selector(fallback[kind])
         if not button:
             raise RuntimeError(f"Teams {kind} control is unavailable")
+        # Current Teams uses input[type=checkbox][role=switch] without aria-checked.
+        # Read the live checked property, not the HTML default/checked attribute.
+        if await button.get_attribute("type") == "checkbox":
+            return button, await button.is_checked()
         checked = await button.get_attribute("aria-checked")
-        label = (await button.get_attribute("aria-label") or "").lower()
+        label = (
+            await button.get_attribute("aria-label") or await button.get_attribute("title") or ""
+        ).lower()
         if checked in ("true", "false"):
             return button, checked == "true"
         if kind == "microphone":
