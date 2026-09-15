@@ -33,6 +33,12 @@ Rollback snapshot (old environment, config, and service units):
 installation and leaves services stopped, matching the state before migration.
 Deployment provenance is recorded in `/opt/croom/DEPLOYMENT.json`.
 
+A subsequent port-3000 check confirmed no HTTP listener or dashboard service on
+the Pi. Port 3000 belongs to the separate fleet frontend's development server.
+The README and administration/deployment guides now distinguish that unfinished
+fleet deployment from the installed agent and native Qt UI. No web server was
+activated as part of this documentation correction.
+
 The sections below record the earlier development milestones; statements about
 no remote deployment in those historical sections precede this migration.
 

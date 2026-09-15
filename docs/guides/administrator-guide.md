@@ -207,38 +207,16 @@ Insert USB before booting, device auto-configures.
 
 ### 3.4 Dashboard Installation
 
-#### Docker (Recommended)
-```bash
-# Pull and run
-docker-compose -f docker-compose.prod.yml up -d
+The standalone Pi installation does not install or start the fleet dashboard on
+port 3000. This repository contains separate React/Vite and Express/PostgreSQL
+sources, but no dashboard Compose file or Django `manage.py`. The previous
+Docker/Django commands did not match the code and have been removed.
 
-# Initial setup
-docker exec -it croom-dashboard ./manage.py createsuperuser
-```
-
-#### Manual Installation
-```bash
-# Clone repository
-git clone https://github.com/amirhmoradi/croom.to-dashboard.git
-cd croom-dashboard
-
-# Install dependencies
-npm install
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your settings
-
-# Initialize database
-./manage.py migrate
-./manage.py createsuperuser
-
-# Start services
-./manage.py runserver
-```
-
----
+See [current dashboard deployment status](deployment-guide.md#3-dashboard-deployment).
+Dashboard operations elsewhere in this guide describe intended fleet capabilities;
+they are not available in the current standalone agent installation.
+For the implemented native room UI, follow
+[Microsoft 365 room-calendar setup](microsoft-365-room-calendar.md).
 
 ## 4. Device Management
 

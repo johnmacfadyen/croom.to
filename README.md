@@ -209,13 +209,25 @@ pip install -e .
 croom --config /etc/croom/config.yaml
 ```
 
-### Docker (Dashboard)
+### Dashboard availability
 
-```bash
-docker-compose up -d
-```
+Installing or starting `croom.service` does **not** start a dashboard on port 3000.
+There is currently no deployed browser dashboard in the standalone Pi installation.
 
-Open `http://localhost:3000` to access the management dashboard.
+- `src/croom-dashboard/frontend` contains the separate fleet dashboard's Vite
+  development frontend (port 3000). Its backend defaults to port 3001 and requires
+  PostgreSQL. These are not installed by the Python package or Pi installer.
+- This repository does not include a dashboard Compose file. The previous
+  `docker-compose up -d` quick-start instruction was incomplete and has been removed.
+- `croom-ui` is the agent-backed native Qt room interface. It runs on the Pi's desktop,
+  not in a browser. It must be launched separately with the proper desktop session.
+- The legacy Python local web interface defaults to port 8080, but the agent does
+  not start it. Its authentication and service integration require repair before use.
+
+See [Microsoft 365 room-calendar setup](docs/guides/microsoft-365-room-calendar.md)
+for the implemented room workflow, and
+[dashboard deployment status](docs/guides/deployment-guide.md#3-dashboard-deployment)
+for the remaining fleet-dashboard work.
 
 ## 🛠️ Hardware Requirements
 

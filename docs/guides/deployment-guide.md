@@ -154,105 +154,31 @@ sudo apt install -y git wget xz-utils tree
 
 ## 3. Dashboard Deployment
 
-### 3.1 Server Requirements
+### Current implementation status
 
-| Requirement | Minimum | Recommended |
-|-------------|---------|-------------|
-| CPU | 2 cores | 4 cores |
-| RAM | 4 GB | 8 GB |
-| Storage | 50 GB | 100 GB |
-| OS | Ubuntu 20.04+, Docker | Ubuntu 22.04 LTS |
+The standalone Pi installer deploys the Python agent. It does not deploy the
+separate fleet management dashboard or open port 3000.
 
-### 3.2 Docker Deployment (Recommended)
+The dashboard sources in this repository consist of a React/Vite frontend
+(`src/croom-dashboard/frontend`, development port 3000), an Express backend
+(`src/croom-dashboard/backend`, default port 3001), and PostgreSQL models.
+There is no dashboard Compose file or Django `manage.py` in this repository.
+The earlier Docker and Django deployment commands in this section did not match
+these sources and have been removed.
 
-```bash
-# Clone repository
-git clone https://github.com/amirhmoradi/croom.to-dashboard.git
-cd croom-dashboard
+A supported dashboard deployment still needs a complete build and service setup,
+database/account provisioning, authentication validation, and agent enrollment
+integration. The current standalone agent explicitly rejects a configured dashboard
+URL because that enrollment/client integration is not implemented for its current API.
+Starting a frontend alone would not provide working room management.
 
-# Configure environment
-cp .env.example .env
-nano .env
-```
+For the implemented single-room workflow, use the native `croom-ui` and the
+[Microsoft 365 room-calendar setup guide](microsoft-365-room-calendar.md).
+The legacy Python web interface on default port 8080 is also not started by the
+agent; its authentication and service-method mismatches remain unresolved.
 
-**Edit `.env`:**
-```bash
-# Database
-POSTGRES_PASSWORD=your-secure-password
-DATABASE_URL=postgresql://croom:your-secure-password@db:5432/croom
-
-# Security
-SECRET_KEY=your-very-long-random-secret-key
-ALLOWED_HOSTS=croom.yourcompany.com
-
-# Email (for alerts)
-EMAIL_HOST=smtp.yourcompany.com
-EMAIL_PORT=587
-EMAIL_USER=croom@yourcompany.com
-EMAIL_PASSWORD=email-password
-
-# Admin
-ADMIN_EMAIL=admin@yourcompany.com
-```
-
-**Start services:**
-```bash
-# Start containers
-docker-compose up -d
-
-# Create admin user
-docker exec -it croom-dashboard ./manage.py createsuperuser
-
-# Verify running
-docker-compose ps
-curl https://localhost/health
-```
-
-### 3.3 SSL Certificate
-
-**Using Let's Encrypt:**
-```bash
-# Install certbot
-sudo apt install certbot
-
-# Get certificate
-sudo certbot certonly --standalone -d croom.yourcompany.com
-
-# Update nginx config
-# Certificates are at /etc/letsencrypt/live/croom.yourcompany.com/
-```
-
-**Using Internal CA:**
-```bash
-# Place certificates in
-/etc/croom/certs/server.crt
-/etc/croom/certs/server.key
-
-# Update docker-compose.yml to mount certificates
-```
-
-### 3.4 Initial Configuration
-
-1. **Login to Dashboard**
-   ```
-   URL: https://croom.yourcompany.com
-   User: admin@yourcompany.com
-   Password: [created during setup]
-   ```
-
-2. **Configure Organization**
-   - Settings → Organization → Update name and details
-   - Settings → Locations → Add your buildings/floors
-
-3. **Create Device Groups**
-   - Devices → Groups → Create groups by location
-
-4. **Configure Alerts**
-   - Settings → Alerts → Enable email/Slack notifications
-
-5. **Generate Enrollment Token**
-   - Settings → Enrollment → Generate Token
-   - Copy token for device provisioning
+Dashboard-dependent rollout procedures elsewhere in this guide are design targets,
+not verified instructions for the current standalone Pi build.
 
 ---
 
