@@ -1,5 +1,38 @@
 # Startup fix and development handoff
 
+## Teams organiser waiting room and fullscreen recovery — 2026-09-15
+
+The owner's next real attempt successfully entered the room name, applied the
+media defaults, and clicked Join. The TV showed **"Someone will let you in when
+the meeting starts"** with the camera preview; Croom still reported `joining`.
+Chromium also had visible browser chrome despite the initial fullscreen command.
+This was a waiting-for-organiser screen, not evidence of successful admission.
+
+Application revision **85f1ef45cb70e2c056e53682b020eac263b45e22** recognizes that
+visible Teams message as `in_lobby`, tells the touchscreen that the organiser
+must start or admit the room, and keeps waiting while the lobby is confirmed.
+Hidden call controls do not count as admission. If the lobby disappears, normal
+connection timeout handling resumes. Leave remains cancellable. A browser-lifetime
+check also restores fullscreen/TV placement after it is lost, without navigating
+or rejoining; it leaves an already-correct window untouched and stops on shutdown.
+
+**159 focused checks passed.** The revision is pushed to the existing fork branch.
+The wheel and installer are staged at `/opt/croom/releases/85f1ef4`, SHA-256
+`2bcbe04f9e28b4fb979abc7106bade7dc2d9aa420166d7a8a4c097c5ad5bff2a`.
+Activation and the Pi browser smoke test are pending the end of the owner's current
+waiting-room attempt. Do not infer that `error` means the real browser is safe to
+close: the old admission timeout can expire while Teams still waits for admission.
+The installer requires idle unless the owner explicitly finishes the attempt.
+Rollback uses the readable retained 2e814d7 release wheel, avoiding the earlier
+root-only backup read failure. The running version remains 2e814d7 until activation.
+
+During this attempt the Pi repeatedly returned **0x50005** (active undervoltage
+and throttling), had all 511 MiB of swap occupied, and sampled CPU idle at 7–10%.
+These observations limit any performance claim: neither these fixes nor a local
+fixture proves fast real Teams loading or working call audio. Preserve 3840×2160
+TV output, HDMI speakers, and the owner's camera/microphone-on defaults.
+
+
 ## Native Teams media controls — 2026-09-15
 
 A live pre-join inspection identified why name entry succeeded but Join was never
