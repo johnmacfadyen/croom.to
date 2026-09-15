@@ -1,5 +1,19 @@
 # Startup fix and development handoff
 
+## Native 4K TV output restored — 2026-09-15
+
+The owner found 1080p visibly poor on the 4K TV. HDMI-A-1 is now **3840×2160 at
+30 Hz**, positioned at 800,0; the touchscreen remains 800×480 at 0,0. The native
+4K mode is saved in `~/.config/kanshi/config`, replacing the earlier 1080p setting.
+The previous profile is retained as `config.before-4k`. Live output verification
+confirmed the selected mode and that Croom remained active without restarting it.
+This was a desktop configuration change; the application revision is unchanged.
+Provenance is under `tv_resolution_update` in `/opt/croom/DEPLOYMENT.json`.
+
+Preserve the owner's preference for sharp 4K signage. Diagnose power delivery and
+meeting performance separately instead of automatically reverting to 1080p.
+
+
 ## Teams guest-name and fullscreen correction — 2026-09-15
 
 Application revision **e3fe77b6cf2a73bac73923f71969e051ada59cd9** is published and
